@@ -1,0 +1,1 @@
+CREATE DATABASE productive_assistant_test;

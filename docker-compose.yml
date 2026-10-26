@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pa
+      POSTGRES_PASSWORD: pa_local_dev
+      POSTGRES_DB: productive_assistant
+    ports:
+      - "5432:5432"
+    volumes:
+      - pa_pgdata:/var/lib/postgresql/data
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+volumes:
+  pa_pgdata:

@@ -1,0 +1,250 @@
+// Gate 1 schema. Instants are timestamptz (UTC); date-only values use @db.Date.
+// Every user-owned row carries userId; provider IDs are unique per user+provider.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  name            String?
+  googleSubject   String    @unique
+  timezone        String    @default("America/New_York") // IANA
+  phoneE164       String?   @unique
+  phoneVerifiedAt DateTime? @db.Timestamptz(3)
+  smsOptOut       Boolean   @default(false)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  sessions           Session[]
+  integrations       Integration[]
+  events             Event[]
+  tasks              Task[]
+  briefings          Briefing[]
+  deliveryAttempts   DeliveryAttempt[]
+  inboundMessages    InboundMessage[]
+  phoneVerifications PhoneVerification[]
+  preference         UserPreference?
+  auditLogs          AuditLog[]
+  jobExecutions      JobExecution[]
+}
+
+model UserPreference {
+  userId            String  @id
+  briefingChannel   String  @default("sms") // sms | email
+  morningTime       String  @default("08:00")
+  eveningEnabled    Boolean @default(false)
+  eveningTime       String  @default("19:00")
+  quietHoursStart   String? // "22:00"
+  quietHoursEnd     String? // "07:00"
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique // sha256 of cookie value
+  expiresAt  DateTime @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PhoneVerification {
+  id        String   @id @default(cuid())
+  userId    String
+  phoneE164 String
+  codeHash  String
+  attempts  Int      @default(0)
+  expiresAt DateTime @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model Integration {
+  id            String    @id @default(cuid())
+  userId        String
+  provider      String // google_calendar
+  status        String    @default("connected") // connected | error | reauth_required | disconnected
+  lastSyncAt    DateTime? @db.Timestamptz(3)
+  lastSuccessAt DateTime? @db.Timestamptz(3)
+  lastError     String?
+  lastErrorAt   DateTime? @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credential  IntegrationCredential?
+  syncCursors SyncCursor[]
+
+  @@unique([userId, provider])
+}
+
+model IntegrationCredential {
+  integrationId   String    @id
+  accessTokenEnc  String
+  refreshTokenEnc String?
+  expiresAt       DateTime? @db.Timestamptz(3)
+  scope           String
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+  integration     Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+}
+
+model SyncCursor {
+  id            String   @id @default(cuid())
+  integrationId String
+  resource      String // e.g. "calendar:primary"
+  cursor        String?
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, resource])
+}
+
+model Event {
+  id                String    @id @default(cuid())
+  userId            String
+  provider          String // google_calendar | internal
+  calendarId        String
+  externalId        String
+  title             String
+  description       String?
+  location          String?
+  allDay            Boolean   @default(false)
+  startAt           DateTime? @db.Timestamptz(3) // timed events
+  endAt             DateTime? @db.Timestamptz(3)
+  startDate         DateTime? @db.Date // all-day events (end exclusive)
+  endDate           DateTime? @db.Date
+  sourceTimezone    String?
+  status            String    @default("confirmed") // confirmed | tentative | cancelled
+  htmlLink          String?
+  verification      String    @default("confirmed") // confirmed | inferred | suggested | stale
+  externalUpdatedAt DateTime? @db.Timestamptz(3)
+  lastSyncedAt      DateTime  @default(now()) @db.Timestamptz(3)
+  deletedAt         DateTime? @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider, externalId])
+  @@index([userId, startAt])
+  @@index([userId, startDate])
+}
+
+model Task {
+  id            String    @id @default(cuid())
+  userId        String
+  title         String
+  description   String?
+  dueAt         DateTime? @db.Timestamptz(3) // due at a specific instant
+  dueDate       DateTime? @db.Date // date-only deadline
+  priority      String    @default("medium") // critical | high | medium | low
+  status        String    @default("open") // open | done
+  category      String?
+  effortMinutes Int?
+  sourceType    String    @default("manual") // manual | sms | canvas | gmail
+  sourceRef     String? // e.g. InboundMessage id
+  verification  String    @default("confirmed")
+  completedAt   DateTime? @db.Timestamptz(3)
+  deletedAt     DateTime? @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, dueDate])
+}
+
+model Briefing {
+  id        String   @id @default(cuid())
+  userId    String
+  kind      String   @default("adhoc") // morning | evening | adhoc | sms_today
+  forDate   DateTime @db.Date
+  timezone  String
+  content   String // SMS text
+  snapshot  Json // the persisted events/tasks used to build it
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveryAttempts DeliveryAttempt[]
+
+  @@index([userId, createdAt])
+}
+
+model DeliveryAttempt {
+  id                String    @id @default(cuid())
+  userId            String
+  briefingId        String?
+  purpose           String    @default("briefing") // briefing | verification | reply
+  channel           String    @default("sms")
+  provider          String // twilio | simulator
+  to                String
+  body              String
+  attempt           Int       @default(1)
+  // queued (created locally) -> accepted (provider took it) -> sent -> delivered
+  // or failed / undelivered. Only provider responses/callbacks advance this.
+  status            String    @default("queued")
+  providerStatus    String?
+  providerMessageId String?   @unique
+  error             String?
+  createdAt         DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  briefing          Briefing? @relation(fields: [briefingId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+}
+
+model InboundMessage {
+  id                String   @id @default(cuid())
+  userId            String?
+  provider          String // twilio | simulator
+  providerMessageId String
+  fromE164          String
+  body              String
+  status            String   @default("received") // received | processed | ignored | rejected
+  command           String?
+  result            Json?
+  receivedAt        DateTime @default(now()) @db.Timestamptz(3)
+  user              User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerMessageId]) // webhook idempotency
+  @@index([userId, receivedAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  actor      String // user | sms | sync | system
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model JobExecution {
+  id         String    @id @default(cuid())
+  userId     String?
+  type       String // calendar_sync | briefing_send
+  status     String    @default("running") // running | succeeded | failed
+  attempt    Int       @default(1)
+  error      String?
+  metadata   Json?
+  startedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, startedAt])
+}
