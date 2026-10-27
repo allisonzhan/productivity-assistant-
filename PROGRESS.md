@@ -3,7 +3,7 @@
 Legend: ✅ done & verified · 🟡 implemented and tested with fakes, awaiting live verification · 🧪 simulated only · ⛔ blocked · ⬜ not started
 
 ## Current work
-Gate 1 delivery switched from SMS to **email via the user's own Gmail** (2026-10-26, user decision: no paid services); SMS/Twilio is paused but kept. **Next: live acceptance with a real Google account** (Calendar + Gmail API enabled, user added as a test user). Live so far (2026-10-27): sign-in, calendar import, dashboard, briefing generation and Gmail send/delivery. Remaining live step: a real reply → task. Gate 2 must not start until the checklist below is all ✅.
+Gate 1 delivery switched from SMS to **email via the user's own Gmail** (2026-10-26, user decision: no paid services); SMS/Twilio is paused but kept. **Gate 1 live acceptance passed on 2026-10-27** with a real Google account: Calendar → dashboard → briefing → Gmail → real reply → task → dashboard. Next: Gate 2 (see Outstanding tasks).
 
 ## Gate 1 checklist
 | Step | Status | Evidence / what's missing |
@@ -13,9 +13,9 @@ Gate 1 delivery switched from SMS to **email via the user's own Gmail** (2026-10
 | 3. Dashboard shows the event in local time | ✅ | Live 2026-10-27: event (stored 17:30Z) shown in America/New_York on the dashboard (user-confirmed). |
 | 4. Briefing from DB data | ✅ | `generateBriefing` reads only persisted rows and stores a snapshot (DB test). |
 | 5. Email send + delivery attempt/status | ✅ | Live 2026-10-27: 2 briefings sent via Gmail `messages.send` (`DeliveryAttempt` sent → delivered); Gmail shows both with labels SENT,INBOX and the `X-PA-Generated: briefing` header. 2 reply checks succeeded. |
-| 6. Email reply "Add task: finish reading Friday" | ⬜ | Live check 2026-10-27 17:19Z: no reply present in either briefing thread in Gmail (thread metadata shows only the briefing), so no `InboundMessage`/task yet. Re-run: reply in the briefing thread, then **Check for replies**. Code path tested against a fake Gmail API. |
-| 7. Reply → task created exactly once | ✅ (automated) | Unique `(provider, providerMessageId)` + one transaction; the app's own mail is skipped (`X-PA-Generated` + own IDs); repeated checks → 1 task, 1 confirmation (`email-channel.test.ts`). |
-| 8. Dashboard shows the persisted task | 🟡 | "via email" badge. Waits on step 6 live. |
+| 6. Email reply "Add task: finish reading Friday" | ✅ | Live 2026-10-27 17:22Z: real Gmail reply in the briefing thread (From = the user's address, no `X-PA-Generated`), picked up by **Check for replies**; `InboundMessage` channel email, command `add`, status processed. |
+| 7. Reply → task created exactly once | ✅ | Live: 1 task "Finish reading" due 2026-10-30, sourceType email; 1 `InboundMessage`, 0 duplicate `(provider, providerMessageId)`; 1 `email:task.create` audit row; confirmation "Added: Finish reading (due Fri Oct 30)" sent in the same thread and skipped as app mail. Repeat-check idempotency covered by `email-channel.test.ts`. |
+| 8. Dashboard shows the persisted task | ✅ | Live: the task persists in the DB and is listed on the dashboard with the "via email" badge (user-confirmed). |
 | SMS path (paused) | 🟡 / 🧪 | Twilio adapter, signed webhooks and status callbacks tested with mocks; simulator works. Not part of Gate 1 acceptance while paused. Twilio trial account exists but has no number or verified caller ID yet. |
 | Duplicate sync → no duplicate events | ✅ (automated) | `calendar-sync.test.ts` |
 | Duplicate webhook / reply check → no duplicate tasks | ✅ (automated) | `sms-webhook.test.ts`, `email-channel.test.ts` |
@@ -34,8 +34,8 @@ Verification run (2026-10-26): `npm run lint` clean · `npm run typecheck` clean
 - Minimal dashboard: integration status/errors/retry, phone verification, Today, Tasks (complete/reopen), next seven days, briefing + attempts + retry, simulator panel, delivery history, inbound log.
 
 ## Outstanding tasks
-1. **Live acceptance (Gate 1):** enable the Gmail API in the Cloud project, fix the OAuth test-user 403 (`access_denied`; check the project number matches the client ID), sign in, and walk through the README checklist. Record the evidence here.
-2. Gate 2 (only after 1): scheduled briefings and a scheduled reply check via a pg-boss worker, quiet hours, task/event CRUD, calendar views, incremental `syncToken`, email channel, onboarding/preferences UI, DONE/WEEK/MONTH commands.
+1. ~~Live acceptance (Gate 1)~~ done 2026-10-27 (email channel).
+2. Gate 2: scheduled briefings and a scheduled reply check via a pg-boss worker, quiet hours, task/event CRUD, calendar views, incremental `syncToken`, email channel, onboarding/preferences UI, DONE/WEEK/MONTH commands.
 
 ## Known bugs / limitations
 - No bugs known yet.

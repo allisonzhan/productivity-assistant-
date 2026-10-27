@@ -18,8 +18,8 @@ Google Calendar → Dashboard → Briefing → Email (Gmail) → Email reply →
 The delivery channel for Gate 1 is **email via the user's own Gmail** (decided 2026-10-26: no paid
 services). SMS/Twilio code stays in place but is **paused**; it is not part of Gate 1 acceptance.
 
-**STOP GATE:** do not start Canvas/Gmail *ingestion*/Outlook/Discord work or extensive UI polish
-until the slice is demonstrated with a *real* Google account (real Gmail send + real reply).
+**STOP GATE:** passed 2026-10-27 (real Google account, real Gmail send + real reply; evidence in
+PROGRESS.md). Gate 2 is next; Canvas/Gmail *ingestion*/Outlook/Discord still wait for Gate 3+.
 A clearly labeled local SMS simulator is allowed for development but is never evidence of live SMS.
 
 ## Stack (decided)
