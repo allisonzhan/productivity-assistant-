@@ -48,6 +48,7 @@ export function statusTone(status: string): keyof typeof BADGE {
   if (["connected", "delivered", "processed", "succeeded"].includes(status)) return "green";
   if (["failed", "undelivered", "error", "reauth_required", "canceled"].includes(status)) return "red";
   if (status === "simulated") return "purple";
+  if (status === "skipped") return "gray";
   return "amber";
 }
 

@@ -13,12 +13,14 @@
     "test:watch": "vitest",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "worker": "tsx --env-file-if-exists=.env --conditions=react-server src/worker/index.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
     "luxon": "^3.7.2",
     "next": "^15.5.28",
+    "pg-boss": "^12.38.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "server-only": "^0.0.1",
@@ -35,6 +37,7 @@
     "eslint-config-next": "^15.5.28",
     "prisma": "^6.19.3",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
   },

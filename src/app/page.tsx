@@ -10,7 +10,9 @@ import { listOpenTasks } from "@/server/tasks/service";
 import { dateOnlyToISO } from "@/server/time";
 import { retryBriefingAction, setBriefingChannelAction, setTaskStatusAction, syncCalendarAction } from "@/app/actions";
 import { Alert, Badge, Button, Card, statusTone } from "@/components/ui";
-import { CheckRepliesForm, PhoneForms, SendBriefingForm, SimulatorForm } from "@/components/forms";
+import { CheckRepliesForm, PhoneForms, SendBriefingForm, SettingsForm, SimulatorForm } from "@/components/forms";
+import { getSchedulePrefs } from "@/server/scheduling/preferences";
+import { HEARTBEAT_ID } from "@/server/scheduling/scheduler";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +37,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
   }
 
   const zone = user.timezone;
-  const [integration, gmail, channel, inputs, openTasks, doneTasks, latestBriefing, deliveries, inbound] = await Promise.all([
+  const [integration, gmail, channel, inputs, openTasks, doneTasks, latestBriefing, deliveries, inbound, prefs, heartbeat, scheduled] = await Promise.all([
     prisma.integration.findUnique({
       where: { userId_provider: { userId: user.id, provider: GOOGLE_CALENDAR } },
       include: { credential: { select: { scope: true } } },
@@ -52,7 +54,16 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
     }),
     prisma.deliveryAttempt.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 10 }),
     prisma.inboundMessage.findMany({ where: { userId: user.id }, orderBy: { receivedAt: "desc" }, take: 5 }),
+    getSchedulePrefs(user.id),
+    prisma.workerHeartbeat.findUnique({ where: { id: HEARTBEAT_ID } }),
+    prisma.scheduledBriefing.findMany({ where: { userId: user.id }, orderBy: { scheduledFor: "desc" }, take: 4 }),
   ]);
+  // Ticks run every minute; three missed ticks means the worker is not running.
+  const workerRunning = !!heartbeat && Date.now() - heartbeat.lastTickAt.getTime() < 3 * 60_000;
+  const scheduleSummary = [
+    prefs.morningEnabled ? `morning ${DateTime.fromFormat(prefs.morningTime, "HH:mm").toFormat("h:mm a")}` : null,
+    prefs.eveningEnabled ? `evening ${DateTime.fromFormat(prefs.eveningTime, "HH:mm").toFormat("h:mm a")}` : null,
+  ].filter(Boolean);
   const simulator = channel === "sms" && env().SMS_PROVIDER === "simulator";
   const grantedScopes = integration?.credential?.scope.split(" ") ?? [];
   const gmailGranted = grantedScopes.includes(GMAIL_SEND_SCOPE) && grantedScopes.includes(GMAIL_READ_SCOPE);
@@ -235,6 +246,39 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
               </ul>
             </details>
           )}
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card title="Automation">
+          <div className="space-y-2 text-sm">
+            {workerRunning ? (
+              <p>
+                <Badge tone="green">worker running</Badge> Last tick {fmt(heartbeat!.lastTickAt, zone, "h:mm:ss a")} · replies checked every 5 min ·
+                calendar synced every 15 min
+              </p>
+            ) : (
+              <Alert tone="error">
+                The worker is not running{heartbeat ? ` (last seen ${fmt(heartbeat.lastTickAt, zone)})` : ""}, so nothing is sent or
+                checked automatically. Start it with <code>npm.cmd run worker</code>.
+              </Alert>
+            )}
+            <p>Scheduled briefings: {scheduleSummary.length ? scheduleSummary.join(", ") : "off"} ({channel})</p>
+            {scheduled.length > 0 && (
+              <ul className="space-y-1">
+                {scheduled.map((s) => (
+                  <li key={s.id}>
+                    <Badge tone={statusTone(s.status)}>{s.status}</Badge> {s.kind} · {DateTime.fromISO(dateOnlyToISO(s.forDate)).toFormat("ccc LLL d")}
+                    {s.status === "retrying" && s.nextAttemptAt && <span className="text-muted"> · next try {fmt(s.nextAttemptAt, zone, "h:mm a")}</span>}
+                    {s.error && <span className="text-red-600 dark:text-red-400"> · {s.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </Card>
+        <Card title="Schedule settings">
+          <SettingsForm initial={{ timezone: zone, ...prefs }} />
         </Card>
       </div>
 

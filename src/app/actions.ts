@@ -12,6 +12,7 @@ import { handleInboundSms } from "@/server/sms/inbound";
 import { checkEmailReplies } from "@/server/email/replies";
 import { setTaskStatus } from "@/server/tasks/service";
 import { errorMessage } from "@/server/jobs/run";
+import { PreferencesError, savePreferences } from "@/server/scheduling/preferences";
 
 export type FormState = { ok?: boolean; message?: string; messageId?: string };
 
@@ -60,6 +61,25 @@ export async function checkEmailRepliesAction(): Promise<FormState> {
   if (!result.ok) return { ok: false, message: `Reply check failed: ${result.error}` };
   if (result.threads === 0) return { ok: true, message: "No briefing emails from the last 7 days to check." };
   return { ok: true, message: `Checked ${result.threads} briefing thread(s): ${result.processed} new repl${result.processed === 1 ? "y" : "ies"} handled.` };
+}
+
+export async function savePreferencesAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    await savePreferences(user.id, {
+      timezone: String(formData.get("timezone") ?? "").trim(),
+      morningEnabled: formData.get("morningEnabled") === "on",
+      morningTime: String(formData.get("morningTime") ?? ""),
+      eveningEnabled: formData.get("eveningEnabled") === "on",
+      eveningTime: String(formData.get("eveningTime") ?? ""),
+      quietHoursStart: String(formData.get("quietHoursStart") ?? ""),
+      quietHoursEnd: String(formData.get("quietHoursEnd") ?? ""),
+    });
+    revalidatePath("/");
+    return { ok: true, message: "Saved." };
+  } catch (err) {
+    return { ok: false, message: err instanceof PreferencesError ? err.message : `Error: ${errorMessage(err)}` };
+  }
 }
 
 export async function setBriefingChannelAction(formData: FormData) {

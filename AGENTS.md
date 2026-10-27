@@ -12,6 +12,9 @@ reply ("Add task: finish reading Friday", TODAY, DONE, STOP…). Priority order:
 **automation > reliability > simplicity**. Personal use first, then other students.
 
 ## Current milestone
+**Gate 2 — runs by itself; core calendar/task product** (branch `gate2-core`, phases A–D in
+DEVELOPMENT_PLAN.md). Gate 1 (below) passed on 2026-10-27.
+
 **Gate 1 — mandatory end-to-end vertical slice** (see DEVELOPMENT_PLAN.md):
 Google Calendar → Dashboard → Briefing → Email (Gmail) → Email reply → Task creation → Dashboard update.
 
@@ -35,12 +38,12 @@ A clearly labeled local SMS simulator is allowed for development but is never ev
 | Dates | Luxon, IANA timezones | Never use `Date` arithmetic for user-local logic |
 | Validation | Zod | All route inputs, env, LLM/tool outputs |
 | LLM | Provider-agnostic `LlmProvider` interface (`src/server/ai`) | Not required for Gate 1; deterministic parser first |
-| Jobs | `JobExecution` table now; pg-boss worker in Gate 2 | Idempotent jobs, bounded retries |
+| Jobs | pg-boss worker (`npm run worker`, `src/worker`) + `JobExecution` records | Thin cron jobs calling idempotent services in `src/server/scheduling`; `ScheduledBriefing` is the exactly-once claim |
 | Tests | Vitest (unit + DB integration against a test database) | |
 
 ## Module layout (`src/server/*` — server-only code)
 `auth` · `calendar` · `tasks` · `integrations` · `sync` · `briefings` · `delivery` ·
-`email` (Gmail client, MIME, reply check) · `sms` (webhooks + command parsing + shared inbound
+`email` (Gmail client, MIME, reply check) · `scheduling` (due rules, preferences, worker services) · `sms` (webhooks + command parsing + shared inbound
 command handler) · `ai` · `notifications` · `scheduling` · `audit` ·
 `crypto` · `db` · `env`.
 UI lives in `src/app` (routes) and `src/components`. Route handlers stay thin: validate →
@@ -89,6 +92,7 @@ npm install
 cp .env.example .env             # then fill in values
 npx prisma migrate dev           # apply migrations
 npm run dev                      # http://localhost:3000
+npm run worker                   # scheduled briefings, reply checks, calendar sync
 npm test                         # vitest (needs TEST_DATABASE_URL for DB tests)
 npm run lint && npm run typecheck && npm run build
 ```

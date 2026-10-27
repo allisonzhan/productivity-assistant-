@@ -3,7 +3,15 @@
 Legend: ✅ done & verified · 🟡 implemented and tested with fakes, awaiting live verification · 🧪 simulated only · ⛔ blocked · ⬜ not started
 
 ## Current work
-Gate 1 delivery switched from SMS to **email via the user's own Gmail** (2026-10-26, user decision: no paid services); SMS/Twilio is paused but kept. **Gate 1 live acceptance passed on 2026-10-27** with a real Google account: Calendar → dashboard → briefing → Gmail → real reply → task → dashboard. Next: Gate 2 (see Outstanding tasks).
+Gate 1 delivery switched from SMS to **email via the user's own Gmail** (2026-10-26, user decision: no paid services); SMS/Twilio is paused but kept. **Gate 1 live acceptance passed on 2026-10-27** with a real Google account: Calendar → dashboard → briefing → Gmail → real reply → task → dashboard. Gate 2 in progress on `gate2-core`.
+
+## Gate 2 checklist
+| Phase | Status | Evidence / what's missing |
+|---|---|---|
+| A. Worker + scheduled briefings + preferences | ✅ (reply leg automated only) | Live 2026-10-27: worker running against the real DB/Google; a scheduled morning briefing (time set to 15:09 local via Schedule settings) was created by the tick and sent at 19:09:07Z with no clicks, then `delivered`; 11 automatic reply checks, 0 failures. Not yet observed live: a reply to a scheduled briefing turned into a task by the 5-minute check (covered by `email-channel.test.ts` / `scheduler.test.ts`). |
+| B. DONE/WEEK/MONTH + task CRUD | ⬜ | |
+| C. Incremental sync, recurrence, calendar views | ⬜ | |
+| D. Delivery history, onboarding, acceptance | ⬜ | |
 
 ## Gate 1 checklist
 | Step | Status | Evidence / what's missing |
@@ -21,7 +29,7 @@ Gate 1 delivery switched from SMS to **email via the user's own Gmail** (2026-10
 | Duplicate webhook / reply check → no duplicate tasks | ✅ (automated) | `sms-webhook.test.ts`, `email-channel.test.ts` |
 | Provider failure → visible, recoverable error | ✅ (automated) | Simulate failure sends a real request with an invalid token (Google Calendar, Gmail) or sender (Twilio); the error is stored on Integration/DeliveryAttempt; the dashboard shows a red alert and Retry; retry recovery is tested. Missing Gmail consent → `reauth_required` + Reconnect. |
 
-Verification run (2026-10-26): `npm run lint` clean · `npm run typecheck` clean · `npm run build` OK · `npm test` 44/44 passed (20 unit, 24 DB integration on Postgres 16).
+Verification run (2026-10-27): `npm run lint` clean · `npm run typecheck` clean · `npm run build` OK · `npm test` 56/56 passed (25 unit, 31 DB integration on Postgres 16).
 
 ## Completed features
 - Context files: CLAUDE.md, DEVELOPMENT_PLAN.md, PROGRESS.md; README with setup, providers, tests, deploy and limitations.
@@ -35,11 +43,13 @@ Verification run (2026-10-26): `npm run lint` clean · `npm run typecheck` clean
 
 ## Outstanding tasks
 1. ~~Live acceptance (Gate 1)~~ done 2026-10-27 (email channel).
-2. Gate 2: scheduled briefings and a scheduled reply check via a pg-boss worker, quiet hours, task/event CRUD, calendar views, incremental `syncToken`, email channel, onboarding/preferences UI, DONE/WEEK/MONTH commands.
+2. Gate 2 — optional Phase A check: reply to a scheduled briefing and let the 5-minute check create the task. Then phases B–D: scheduled briefings and a scheduled reply check via a pg-boss worker, quiet hours, task/event CRUD, calendar views, incremental `syncToken`, email channel, onboarding/preferences UI, DONE/WEEK/MONTH commands.
 
 ## Known bugs / limitations
 - No bugs known yet.
-- Email replies are checked on demand (**Check for replies**) in Gate 1, over the last 7 days of briefing threads; only the first line above the quoted text is read.
+- Email replies are checked every 5 minutes by the worker (or on demand), over the last 7 days of briefing threads; only the first line above the quoted text is read.
+- Automation runs only while `npm run worker` runs (laptop). Hosting is an open decision. Google Testing mode expires refresh tokens after 7 days.
+- Catch-up is same local day only: an evening briefing due at 22:00 is not sent after midnight.
 - Email `delivered` means Gmail shows the self-sent message in the inbox; it is confirmed on the next reply check.
 - Sync is a windowed full sync (−1 to +30 days) of the primary calendar only.
 - HELP replies come from the app; if Twilio Advanced Opt-Out also auto-replies to HELP, the user gets two messages. Revisit with a Messaging Service.
@@ -61,3 +71,6 @@ Verification run (2026-10-26): `npm run lint` clean · `npm run typecheck` clean
 | 2026-10-26 | Gate 1 channel: email via the user's own Gmail (`gmail.send` + `gmail.readonly`); SMS paused | User wants no paid services; reuses the Google sign-in; Twilio needs a paid number/A2P for real use |
 | 2026-10-26 | Email replies read by an on-demand check of app-started threads, not Gmail push | Push needs Cloud Pub/Sub; polling only the app's own threads keeps access narrow |
 | 2026-10-26 | Shared inbound command handler for SMS and email | One exactly-once path, one parser, same STOP/rate-limit rules |
+| 2026-10-27 | Worker: pg-boss cron (tick 1 min, replies 5 min, sync 15 min), "exclusive" queues; retries/backoff in our `ScheduledBriefing` row, not pg-boss | Cron + single execution from pg-boss; retry state stays visible and testable in our own table |
+| 2026-10-27 | Catch-up window 4 h; quiet hours defer automated sends only (command replies stay immediate) | A late briefing is still useful in the morning; a user who just texted expects an answer |
+| 2026-10-27 | Worker runs locally first (`tsx --conditions=react-server`) | Free; hosting decided after Phase A works |

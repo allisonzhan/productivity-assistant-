@@ -1,7 +1,7 @@
 import { prisma } from "@/server/db";
 import { errorMessage, runJob } from "@/server/jobs/run";
 import { GMAIL_READ_SCOPE } from "@/server/auth/google-oauth";
-import { GMAIL, ReauthRequiredError, getGmailAccessToken } from "@/server/integrations/google-credentials";
+import { GMAIL, ReauthRequiredError, getGmailAccessToken, hasGoogleScope } from "@/server/integrations/google-credentials";
 import { GoogleApiError } from "@/server/calendar/google-client";
 import { getGmailThread, header } from "@/server/email/gmail-client";
 import { GENERATED_HEADER, extractReplyCommand, parseAddress, payloadText } from "@/server/email/mime";
@@ -32,12 +32,16 @@ export async function checkEmailReplies(userId: string, opts: { fetchImpl?: type
 
   try {
     return await runJob({ type: "email_reply_check", userId }, async () => {
-      const accessToken = await getGmailAccessToken(userId, GMAIL_READ_SCOPE, opts.fetchImpl);
       const recent = await prisma.deliveryAttempt.findMany({
         where: { userId, channel: "email", threadId: { not: null }, createdAt: { gte: new Date(now.getTime() - LOOKBACK_DAYS * DAY_MS) } },
         select: { threadId: true },
       });
       const threadIds = [...new Set(recent.map((a) => a.threadId!))];
+      // Nothing sent recently: skip Gmail (and the token refresh), but still report missing consent.
+      if (!threadIds.length && !(await hasGoogleScope(userId, GMAIL_READ_SCOPE))) {
+        throw new ReauthRequiredError("Gmail access was not granted. Reconnect Google and allow Gmail access.");
+      }
+      const accessToken = threadIds.length ? await getGmailAccessToken(userId, GMAIL_READ_SCOPE, opts.fetchImpl) : "";
       const [ownSends, seen] = await Promise.all([
         prisma.deliveryAttempt.findMany({ where: { userId, channel: "email", threadId: { in: threadIds }, providerMessageId: { not: null } } }),
         prisma.inboundMessage.findMany({ where: { userId, provider: "gmail", threadId: { in: threadIds } }, select: { providerMessageId: true } }),

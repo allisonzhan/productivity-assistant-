@@ -54,7 +54,7 @@ npm 11 may ask you to approve install scripts. Approve them with `npm approve-sc
 7. Duplicate checks: choose **Sync now** again (the event count does not change) and **Check for replies** again (no second task; the reply check skips the app's own mail and messages it has already handled).
 8. Failure check: choose **Simulate failure** (a real Google request with an invalid token) or **Send with simulated failure** (a real Gmail request with an invalid token). A red error appears with **Retry sync** / **Retry send**.
 
-Replies are only read from threads the app started, and only messages from your own address are acted on. Gate 1 checks replies when you click the button; a scheduled check arrives with the Gate 2 worker.
+Replies are only read from threads the app started, and only messages from your own address are acted on. **Check for replies** checks immediately; the worker also checks every 5 minutes.
 
 **SMS (paused):** switch Briefing → Send by **SMS** to use the Twilio path (phone verification, signed webhooks, status callbacks). With `SMS_PROVIDER=simulator` it runs against a local outbox and **does not prove live SMS**.
 
@@ -65,8 +65,22 @@ Replies are only read from threads the app started, and only messages from your 
 - `npx prisma migrate dev --name <change>` during development. Commit the generated `prisma/migrations`.
 - `npm run db:deploy` (`prisma migrate deploy`) in production.
 
-## Worker execution
-Gate 1 has no long-running worker. Sync and briefing sends run on demand (OAuth callback and dashboard actions), and each run is recorded in `JobExecution`. Scheduled 8 AM / 7 PM briefings and periodic sync move to a durable pg-boss worker (`npm run worker`) in Gate 2.
+## Worker (automation)
+Run it next to the web app, in a second terminal:
+```bash
+npm run worker        # PowerShell: npm.cmd run worker
+```
+It uses pg-boss (cron schedules stored in Postgres, schema `pgboss`):
+
+| Job | Every | Does |
+|---|---|---|
+| `scheduler-tick` | minute | Records a heartbeat, creates a `ScheduledBriefing` for each briefing now due (morning / optional evening at the user's local time, DST-safe), and sends it |
+| `email-reply-check` | 5 min | Reads replies in recent briefing threads (email-channel users) |
+| `calendar-sync` | 15 min | Syncs Google Calendar (skips integrations that need reconnecting) |
+
+Exactly-once: `ScheduledBriefing` is unique per user + kind + local date, rows are claimed atomically, and an existing non-failed send is never repeated. A failed send retries after 5 and 10 minutes, then shows as failed. A briefing missed while the worker was off still goes out up to 4 hours late; nothing automated is sent during quiet hours. Set times, timezone and quiet hours under **Schedule settings**; the **Automation** card shows whether the worker is running.
+
+Briefings only go out while the worker runs. In Google *Testing* mode the refresh token expires after 7 days, which stops unattended runs until you sign in again.
 
 ## Tests
 ```bash

@@ -30,6 +30,7 @@ model User {
   briefings          Briefing[]
   deliveryAttempts   DeliveryAttempt[]
   inboundMessages    InboundMessage[]
+  scheduledBriefings ScheduledBriefing[]
   phoneVerifications PhoneVerification[]
   preference         UserPreference?
   auditLogs          AuditLog[]
@@ -39,6 +40,7 @@ model User {
 model UserPreference {
   userId            String  @id
   briefingChannel   String  @default("email") // email | sms
+  morningEnabled    Boolean @default(true)
   morningTime       String  @default("08:00")
   eveningEnabled    Boolean @default(false)
   eveningTime       String  @default("19:00")
@@ -224,6 +226,34 @@ model InboundMessage {
   @@index([userId, receivedAt])
 }
 
+// One row per user + kind + local date: the claim that makes scheduled sends exactly-once.
+model ScheduledBriefing {
+  id            String    @id @default(cuid())
+  userId        String
+  kind          String // morning | evening
+  forDate       DateTime  @db.Date // user-local date
+  scheduledFor  DateTime  @db.Timestamptz(3) // the local time it was due, as an instant
+  // pending -> sending -> sent | retrying (nextAttemptAt) | failed | skipped
+  status        String    @default("pending")
+  briefingId    String?   @unique
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime? @db.Timestamptz(3)
+  error         String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, forDate])
+  @@index([status, nextAttemptAt])
+}
+
+// Written by the worker on every scheduler tick so the dashboard can say whether it is running.
+model WorkerHeartbeat {
+  id         String   @id // "scheduler"
+  startedAt  DateTime @db.Timestamptz(3)
+  lastTickAt DateTime @db.Timestamptz(3)
+}
+
 model AuditLog {
   id         String   @id @default(cuid())
   userId     String
@@ -241,7 +271,7 @@ model AuditLog {
 model JobExecution {
   id         String    @id @default(cuid())
   userId     String?
-  type       String // calendar_sync | briefing_send | email_reply_check
+  type       String // calendar_sync | briefing_send | email_reply_check | scheduled_briefing
   status     String    @default("running") // running | succeeded | failed
   attempt    Int       @default(1)
   error      String?

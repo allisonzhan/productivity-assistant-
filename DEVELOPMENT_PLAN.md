@@ -2,7 +2,7 @@
 
 Derived from PRD v1.1 and the Claude Code Implementation Prompt. Conventions: [CLAUDE.md](CLAUDE.md). Status: [PROGRESS.md](PROGRESS.md).
 
-## Current milestone: Gate 1 — end-to-end vertical slice
+## Current milestone: Gate 2 — runs by itself; core calendar/task product
 
 ## Phases
 
@@ -11,7 +11,7 @@ Derived from PRD v1.1 and the Claude Code Implementation Prompt. Conventions: [C
 - `.env.example`, docker-compose Postgres, lint/typecheck/test tooling.
 - Prisma schema covering the slice's entities; first migration.
 
-### Gate 1 — Mandatory vertical slice (CURRENT)
+### Gate 1 — Mandatory vertical slice (PASSED 2026-10-27, email channel)
 | # | Step | Implementation |
 |---|---|---|
 | 1 | Authenticate and connect a real Google Calendar | `/api/auth/google/start` → consent (openid email profile `calendar.readonly`, offline, PKCE, state) → `/api/auth/google/callback`: verify ID token, upsert `User`, store encrypted tokens in `IntegrationCredential`, create `Session` |
@@ -29,8 +29,21 @@ Cross-cutting acceptance:
 - A simulated provider failure (e.g. "Simulate failure" toggle / invalid token / Twilio error) shows a visible error with a **Retry** action, recorded in `Integration.lastError` / `DeliveryAttempt.error`.
 - Acceptance uses real Google OAuth, real Gmail sends and a real reply. (SMS is paused; its local simulator is labeled SIMULATED.)
 
-### Gate 2 — Core calendar/task product
-Day/week/month calendar; event and task CRUD; recurring events and exceptions (`EventException`); timezone handling across DST; morning 8 AM and optional 7 PM digests via a durable pg-boss worker; delivery history; quiet hours; SMS commands TODAY, WEEK, MONTH, TASKS, ADD, DONE, HELP, STOP/START; onboarding (timezone, channel, times, phone verification); transactional email channel.
+### Gate 2 — Runs by itself; core calendar/task product (CURRENT, branch `gate2-core`)
+Goal: daily use with no clicks, and full task/calendar management. Ordered by daily value.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| A. Automation | pg-boss worker (`npm run worker`): scheduler tick every minute (morning briefing at the user's local time, optional evening briefing, DST-safe via Luxon, catch-up window, quiet hours), email reply check every 5 min, calendar sync every 15 min. `ScheduledBriefing` row unique on `(userId, kind, forDate)` so a briefing is never sent twice. Preferences UI (timezone, times, evening, quiet hours, channel). Worker heartbeat + scheduled-send status on the dashboard. | A real morning briefing arrives with no clicks; a reply becomes a task within ~5 min without clicking |
+| B. Commands + tasks | `DONE <n\|title>`, `WEEK`, `MONTH` (email and SMS); task create/edit/delete, priority, due date/time on the dashboard | A week of tasks managed entirely by replies or entirely on the dashboard |
+| C. Calendar | Incremental `syncToken` sync; recurring events and exceptions (`EventException`); day/week/month views; internal events | A moved instance of a weekly event is correct; Google changes appear within one sync |
+| D. Finish | Delivery history page; first-run onboarding (timezone, channel, time); docs; real-account acceptance like Gate 1 | Checklist in PROGRESS.md all ✅ |
+
+Dropped: the separate transactional email provider (Resend) — Gmail already covers email for free.
+
+Open decisions:
+- **Where the worker runs.** Phase A targets the user's laptop (free; briefings only while it runs). Free cloud hosting is evaluated after Phase A works.
+- **Google 7-day refresh-token expiry** in Testing mode stops unattended runs weekly. Switching the consent screen to *In production* (unverified, personal use) should lift it; confirm current Google policy before switching.
 
 ### Gate 3 — Canvas & Gmail ingestion
 Canvas API: courses, assignments, submission states, deadlines, announcements (Canvas is authoritative for its own deadlines). Gmail OAuth triage: deterministic filtering first, then structured LLM classification (critical/high/medium/low/ignored; critical needs verifiable urgency). `SourceRecord` provenance, original links, dedup, `ExtractionProposal` review queue, conflict flagging (no silent overwrite). Preserve personal notes/priorities on external updates.
