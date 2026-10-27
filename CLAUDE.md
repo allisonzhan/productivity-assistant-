@@ -7,17 +7,20 @@ Source of truth for requirements: `AI_Productivity_Assistant_PRD.pdf` (v1.1) and
 ## Product in one paragraph
 A student-first web app that automatically collects deadlines, events and important
 messages (Google Calendar first; Canvas, Gmail later), stores them in a trustworthy
-task/calendar database, and delivers concise daily briefings by SMS/email. Users can
-text back ("Add task: finish reading Friday", TODAY, DONE, STOP…). Priority order:
+task/calendar database, and delivers concise daily briefings by email (SMS later). Users can
+reply ("Add task: finish reading Friday", TODAY, DONE, STOP…). Priority order:
 **automation > reliability > simplicity**. Personal use first, then other students.
 
 ## Current milestone
 **Gate 1 — mandatory end-to-end vertical slice** (see DEVELOPMENT_PLAN.md):
-Google Calendar → Dashboard → Briefing → SMS → SMS reply → Task creation → Dashboard update.
+Google Calendar → Dashboard → Briefing → Email (Gmail) → Email reply → Task creation → Dashboard update.
 
-**STOP GATE:** do not start Canvas/Gmail/Outlook/Discord work or extensive UI polish until
-the slice is demonstrated with *real* provider callbacks. A clearly labeled local SMS
-simulator is allowed for development but is never evidence of live SMS.
+The delivery channel for Gate 1 is **email via the user's own Gmail** (decided 2026-10-26: no paid
+services). SMS/Twilio code stays in place but is **paused**; it is not part of Gate 1 acceptance.
+
+**STOP GATE:** do not start Canvas/Gmail *ingestion*/Outlook/Discord work or extensive UI polish
+until the slice is demonstrated with a *real* Google account (real Gmail send + real reply).
+A clearly labeled local SMS simulator is allowed for development but is never evidence of live SMS.
 
 ## Stack (decided)
 | Concern | Choice | Notes |
@@ -27,7 +30,8 @@ simulator is allowed for development but is never evidence of live SMS.
 | Styling | Tailwind CSS v4, shadcn/ui-style primitives in `src/components/ui` | Minimal; no polish before Gate 1 |
 | Auth | Custom Google OAuth 2.0 (authorization code + PKCE + state) | Sign-in and Calendar consent in one flow; DB-backed sessions, httpOnly cookie |
 | Calendar | Google Calendar API v3 via `fetch` (scope `calendar.readonly`) | Windowed idempotent sync now; `syncToken` in Gate 2 |
-| SMS | Twilio (REST via `fetch`), Twilio-compatible adapter interface | Inbound + status callbacks, signature validated |
+| Email | Gmail API v1 via `fetch` (`gmail.send`, `gmail.readonly`) | Sent from the user's mailbox to itself; replies read only from app-started threads, on demand (scheduled in Gate 2) |
+| SMS (paused) | Twilio (REST via `fetch`), Twilio-compatible adapter interface | Inbound + status callbacks, signature validated |
 | Dates | Luxon, IANA timezones | Never use `Date` arithmetic for user-local logic |
 | Validation | Zod | All route inputs, env, LLM/tool outputs |
 | LLM | Provider-agnostic `LlmProvider` interface (`src/server/ai`) | Not required for Gate 1; deterministic parser first |
@@ -36,7 +40,8 @@ simulator is allowed for development but is never evidence of live SMS.
 
 ## Module layout (`src/server/*` — server-only code)
 `auth` · `calendar` · `tasks` · `integrations` · `sync` · `briefings` · `delivery` ·
-`sms` (webhooks + command parsing) · `ai` · `notifications` · `scheduling` · `audit` ·
+`email` (Gmail client, MIME, reply check) · `sms` (webhooks + command parsing + shared inbound
+command handler) · `ai` · `notifications` · `scheduling` · `audit` ·
 `crypto` · `db` · `env`.
 UI lives in `src/app` (routes) and `src/components`. Route handlers stay thin: validate →
 authorize → call a module service → return.
@@ -48,11 +53,13 @@ authorize → call a module service → return.
    "SIMULATED" in UI, DB (`provider = "simulator"`) and logs.
 3. **Idempotency everywhere:** provider-specific stable external IDs with unique
    constraints `(userId, provider, externalId)`; upserts, never blind inserts. Inbound
-   webhooks dedupe on provider message ID (`MessageSid`) via a unique constraint.
+   messages dedupe on provider message ID (Twilio `MessageSid`, Gmail message ID) via a unique constraint.
 4. **User-scoped queries:** every query on user data filters by `userId` from the
    verified session (or verified phone mapping for SMS). Never trust a client-supplied userId.
-5. **Webhooks:** verify Twilio `X-Twilio-Signature` before any processing; reject with 403.
-   Associate inbound numbers only with *verified* user phone numbers. Honor STOP.
+5. **Inbound:** verify Twilio `X-Twilio-Signature` before any processing; reject with 403.
+   Associate inbound numbers only with *verified* user phone numbers. Email replies: act only on
+   messages from the user's own Google-verified address, in threads the app started, and never on
+   the app's own mail (`X-PA-Generated` header / own message IDs). Honor STOP on every channel.
 6. **Secrets:** server-only; OAuth tokens encrypted at rest (AES-256-GCM, `ENCRYPTION_KEY`).
    Never commit `.env`. Add new variables to `.env.example` with placeholders.
 7. **Time:** store instants as UTC `timestamptz`; all-day events/date-only deadlines in

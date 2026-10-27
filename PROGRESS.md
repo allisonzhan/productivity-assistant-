@@ -3,24 +3,25 @@
 Legend: ✅ done & verified · 🟡 implemented and tested with fakes, awaiting live verification · 🧪 simulated only · ⛔ blocked · ⬜ not started
 
 ## Current work
-Gate 1 code is complete. **Next: live acceptance with real credentials** (Google OAuth client, Twilio number plus a tunnel). Gate 2 must not start until the checklist below is all ✅.
+Gate 1 delivery switched from SMS to **email via the user's own Gmail** (2026-10-26, user decision: no paid services); SMS/Twilio is paused but kept. **Next: live acceptance with a real Google account** (Calendar + Gmail API enabled, user added as a test user). Live so far (2026-10-27): sign-in, calendar import, dashboard, briefing generation and Gmail send/delivery. Remaining live step: a real reply → task. Gate 2 must not start until the checklist below is all ✅.
 
 ## Gate 1 checklist
 | Step | Status | Evidence / what's missing |
 |---|---|---|
-| 1. Google OAuth + Calendar connect | 🟡 | Code + PKCE + state flow, encrypted tokens, ID-token claim checks. Smoke test: `/api/auth/google/start` returns 307 to Google with the correct scopes. **Needs a real Google client ID/secret to run end to end.** |
-| 2. Import a real event with its external ID | 🟡 | `syncGoogleCalendar` upserts on `(userId, provider, externalId)`; tested with mocked Google responses. Needs a real account. |
-| 3. Dashboard shows the event in local time | 🟡 | Dashboard rendered with a seeded event at the correct local time; DST/timezone unit tests pass. Needs a real event. |
+| 1. Google OAuth + Calendar connect | ✅ | Live 2026-10-27: real Google account signed in (test user, project in Testing). Granted scopes stored: openid, email, profile, calendar.readonly, gmail.send, gmail.readonly; refresh token stored encrypted. First sync succeeded (`JobExecution` calendar_sync succeeded). |
+| 2. Import a real event with its external ID | ✅ | Live 2026-10-27: a real primary-calendar event imported with its Google event ID; 5 syncs succeeded, 0 duplicate `(userId, provider, externalId)` rows. |
+| 3. Dashboard shows the event in local time | ✅ | Live 2026-10-27: event (stored 17:30Z) shown in America/New_York on the dashboard (user-confirmed). |
 | 4. Briefing from DB data | ✅ | `generateBriefing` reads only persisted rows and stores a snapshot (DB test). |
-| 5. SMS send + delivery attempt/status | 🟡 / 🧪 | Twilio adapter + `DeliveryAttempt` state machine + signed status callbacks are tested with a mocked Twilio API; the simulator works locally. **Live send blocked until Twilio credentials exist (and A2P 10DLC registration for non-trial US delivery).** |
-| 6. SMS reply "Add task: finish reading Friday" | 🟡 / 🧪 | Webhook route tested with correctly signed requests; simulator form works. Needs a real reply from a phone. |
-| 7. Verified webhook → task created exactly once | ✅ (automated) | Signature validated against `PUBLIC_URL`; the unique `(provider, MessageSid)` constraint plus a single transaction; replayed request → 1 task, 1 reply. Live check: `scripts/replay-twilio-webhook.mjs`. |
-| 8. Dashboard shows the persisted task | 🟡 | Rendered with a seeded SMS task ("via SMS" badge). Needs the live flow. |
+| 5. Email send + delivery attempt/status | ✅ | Live 2026-10-27: 2 briefings sent via Gmail `messages.send` (`DeliveryAttempt` sent → delivered); Gmail shows both with labels SENT,INBOX and the `X-PA-Generated: briefing` header. 2 reply checks succeeded. |
+| 6. Email reply "Add task: finish reading Friday" | ⬜ | Live check 2026-10-27 17:19Z: no reply present in either briefing thread in Gmail (thread metadata shows only the briefing), so no `InboundMessage`/task yet. Re-run: reply in the briefing thread, then **Check for replies**. Code path tested against a fake Gmail API. |
+| 7. Reply → task created exactly once | ✅ (automated) | Unique `(provider, providerMessageId)` + one transaction; the app's own mail is skipped (`X-PA-Generated` + own IDs); repeated checks → 1 task, 1 confirmation (`email-channel.test.ts`). |
+| 8. Dashboard shows the persisted task | 🟡 | "via email" badge. Waits on step 6 live. |
+| SMS path (paused) | 🟡 / 🧪 | Twilio adapter, signed webhooks and status callbacks tested with mocks; simulator works. Not part of Gate 1 acceptance while paused. Twilio trial account exists but has no number or verified caller ID yet. |
 | Duplicate sync → no duplicate events | ✅ (automated) | `calendar-sync.test.ts` |
-| Duplicate webhook → no duplicate tasks | ✅ (automated) | `sms-webhook.test.ts` |
-| Provider failure → visible, recoverable error | ✅ (automated + rendered) | Simulate failure sends a real request with an invalid token or sender; the error is stored on Integration/DeliveryAttempt; the dashboard shows a red alert and Retry; retry recovery is tested. |
+| Duplicate webhook / reply check → no duplicate tasks | ✅ (automated) | `sms-webhook.test.ts`, `email-channel.test.ts` |
+| Provider failure → visible, recoverable error | ✅ (automated) | Simulate failure sends a real request with an invalid token (Google Calendar, Gmail) or sender (Twilio); the error is stored on Integration/DeliveryAttempt; the dashboard shows a red alert and Retry; retry recovery is tested. Missing Gmail consent → `reauth_required` + Reconnect. |
 
-Verification run (2026-10-25): `npm run lint` clean · `npm run typecheck` clean · `npm run build` OK · `npm test` 34/34 passed (15 unit, 19 DB integration on Postgres 16).
+Verification run (2026-10-26): `npm run lint` clean · `npm run typecheck` clean · `npm run build` OK · `npm test` 44/44 passed (20 unit, 24 DB integration on Postgres 16).
 
 ## Completed features
 - Context files: CLAUDE.md, DEVELOPMENT_PLAN.md, PROGRESS.md; README with setup, providers, tests, deploy and limitations.
@@ -33,11 +34,13 @@ Verification run (2026-10-25): `npm run lint` clean · `npm run typecheck` clean
 - Minimal dashboard: integration status/errors/retry, phone verification, Today, Tasks (complete/reopen), next seven days, briefing + attempts + retry, simulator panel, delivery history, inbound log.
 
 ## Outstanding tasks
-1. **Live acceptance (Gate 1):** create the Google OAuth client and the Twilio number, run a tunnel, and walk through the README checklist. Record the evidence here.
-2. Gate 2 (only after 1): scheduled briefings via a pg-boss worker, quiet hours, task/event CRUD, calendar views, incremental `syncToken`, email channel, onboarding/preferences UI, DONE/WEEK/MONTH commands.
+1. **Live acceptance (Gate 1):** enable the Gmail API in the Cloud project, fix the OAuth test-user 403 (`access_denied`; check the project number matches the client ID), sign in, and walk through the README checklist. Record the evidence here.
+2. Gate 2 (only after 1): scheduled briefings and a scheduled reply check via a pg-boss worker, quiet hours, task/event CRUD, calendar views, incremental `syncToken`, email channel, onboarding/preferences UI, DONE/WEEK/MONTH commands.
 
 ## Known bugs / limitations
 - No bugs known yet.
+- Email replies are checked on demand (**Check for replies**) in Gate 1, over the last 7 days of briefing threads; only the first line above the quoted text is read.
+- Email `delivered` means Gmail shows the self-sent message in the inbox; it is confirmed on the next reply check.
 - Sync is a windowed full sync (−1 to +30 days) of the primary calendar only.
 - HELP replies come from the app; if Twilio Advanced Opt-Out also auto-replies to HELP, the user gets two messages. Revisit with a Messaging Service.
 - Rate limiting is per user (10 per minute) and stored in the DB; there is no IP-level limiting yet.
@@ -55,3 +58,6 @@ Verification run (2026-10-25): `npm run lint` clean · `npm run typecheck` clean
 | 2026-10-25 | Simulated failures use real provider requests with invalid credentials | Demonstrates genuine provider error handling, not a fake code path |
 | 2026-10-25 | Jobs recorded in `JobExecution`, triggered on demand for Gate 1; pg-boss scheduler in Gate 2 | Keeps the slice simple while staying auditable |
 | 2026-10-25 | Windowed full sync with soft-delete of missing events | `syncToken` can't be combined with time bounds; deferred to Gate 2 |
+| 2026-10-26 | Gate 1 channel: email via the user's own Gmail (`gmail.send` + `gmail.readonly`); SMS paused | User wants no paid services; reuses the Google sign-in; Twilio needs a paid number/A2P for real use |
+| 2026-10-26 | Email replies read by an on-demand check of app-started threads, not Gmail push | Push needs Cloud Pub/Sub; polling only the app's own threads keeps access narrow |
+| 2026-10-26 | Shared inbound command handler for SMS and email | One exactly-once path, one parser, same STOP/rate-limit rules |

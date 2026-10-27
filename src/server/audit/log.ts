@@ -6,7 +6,7 @@ type Db = PrismaClient | Prisma.TransactionClient;
 export function audit(
   entry: {
     userId: string;
-    actor: "user" | "sms" | "sync" | "system";
+    actor: "user" | "sms" | "email" | "sync" | "system";
     action: string;
     entityType?: string;
     entityId?: string;

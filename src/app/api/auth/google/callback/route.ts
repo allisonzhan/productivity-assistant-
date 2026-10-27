@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
-import { OAUTH_COOKIE, exchangeCode, parseIdToken, readOAuthCookie } from "@/server/auth/google-oauth";
+import { CALENDAR_SCOPE, OAUTH_COOKIE, exchangeCode, parseIdToken, readOAuthCookie } from "@/server/auth/google-oauth";
 import { SESSION_COOKIE, createSession, sessionCookieOptions } from "@/server/auth/session";
 import { getCalendarTimezone } from "@/server/calendar/google-client";
 import { saveGoogleTokens } from "@/server/integrations/google-credentials";
@@ -9,8 +9,6 @@ import { syncGoogleCalendar } from "@/server/sync/google-calendar-sync";
 import { audit } from "@/server/audit/log";
 import { errorMessage } from "@/server/jobs/run";
 import { isValidZone } from "@/server/time";
-
-const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
 
 export async function GET(req: NextRequest) {
   const appUrl = env().APP_URL;

@@ -108,7 +108,7 @@ export function renderSms(s: BriefingSnapshot): string {
   return lines.join("\n");
 }
 
-export async function generateBriefing(userId: string, kind: "adhoc" | "morning" | "evening" | "sms_today", now: Date = new Date()) {
+export async function generateBriefing(userId: string, kind: "adhoc" | "morning" | "evening" | "sms_today" | "email_today", now: Date = new Date()) {
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const { events, tasks, today } = await loadBriefingInputs(userId, user.timezone, now);
   const snapshot = buildSnapshot(events, tasks, user.timezone, today, now);

@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import {
+  checkEmailRepliesAction,
   confirmPhoneAction,
   sendBriefingAction,
   simulateInboundAction,
@@ -49,6 +50,18 @@ export function SendBriefingForm() {
         <Button variant="danger" name="simulateFailure" value="1" disabled={pending}>
           Send with simulated failure
         </Button>
+      </form>
+      <Message state={state} />
+    </div>
+  );
+}
+
+export function CheckRepliesForm() {
+  const [state, action, pending] = useActionState(checkEmailRepliesAction, {});
+  return (
+    <div>
+      <form action={action}>
+        <Button variant="secondary" disabled={pending}>{pending ? "Checking…" : "Check for replies"}</Button>
       </form>
       <Message state={state} />
     </div>

@@ -19,6 +19,7 @@ model User {
   phoneE164       String?   @unique
   phoneVerifiedAt DateTime? @db.Timestamptz(3)
   smsOptOut       Boolean   @default(false)
+  emailOptOut     Boolean   @default(false)
   createdAt       DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
 
@@ -37,7 +38,7 @@ model User {
 
 model UserPreference {
   userId            String  @id
-  briefingChannel   String  @default("sms") // sms | email
+  briefingChannel   String  @default("email") // email | sms
   morningTime       String  @default("08:00")
   eveningEnabled    Boolean @default(false)
   eveningTime       String  @default("19:00")
@@ -74,7 +75,7 @@ model PhoneVerification {
 model Integration {
   id            String    @id @default(cuid())
   userId        String
-  provider      String // google_calendar
+  provider      String // google_calendar | gmail (gmail tracks reply-check health; tokens live on google_calendar)
   status        String    @default("connected") // connected | error | reauth_required | disconnected
   lastSyncAt    DateTime? @db.Timestamptz(3)
   lastSuccessAt DateTime? @db.Timestamptz(3)
@@ -152,7 +153,7 @@ model Task {
   status        String    @default("open") // open | done
   category      String?
   effortMinutes Int?
-  sourceType    String    @default("manual") // manual | sms | canvas | gmail
+  sourceType    String    @default("manual") // manual | sms | email (briefing reply) | canvas | gmail (ingestion)
   sourceRef     String? // e.g. InboundMessage id
   verification  String    @default("confirmed")
   completedAt   DateTime? @db.Timestamptz(3)
@@ -167,7 +168,7 @@ model Task {
 model Briefing {
   id        String   @id @default(cuid())
   userId    String
-  kind      String   @default("adhoc") // morning | evening | adhoc | sms_today
+  kind      String   @default("adhoc") // morning | evening | adhoc | sms_today | email_today
   forDate   DateTime @db.Date
   timezone  String
   content   String // SMS text
@@ -184,8 +185,8 @@ model DeliveryAttempt {
   userId            String
   briefingId        String?
   purpose           String    @default("briefing") // briefing | verification | reply
-  channel           String    @default("sms")
-  provider          String // twilio | simulator
+  channel           String    @default("sms") // sms | email
+  provider          String // twilio | simulator | gmail
   to                String
   body              String
   attempt           Int       @default(1)
@@ -194,6 +195,7 @@ model DeliveryAttempt {
   status            String    @default("queued")
   providerStatus    String?
   providerMessageId String?   @unique
+  threadId          String? // Gmail thread, so replies can be matched to the briefing
   error             String?
   createdAt         DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime  @updatedAt @db.Timestamptz(3)
@@ -206,9 +208,11 @@ model DeliveryAttempt {
 model InboundMessage {
   id                String   @id @default(cuid())
   userId            String?
-  provider          String // twilio | simulator
+  channel           String   @default("sms") // sms | email
+  provider          String // twilio | simulator | gmail
   providerMessageId String
-  fromE164          String
+  fromAddress       String // E.164 phone number or email address
+  threadId          String? // Gmail thread
   body              String
   status            String   @default("received") // received | processed | ignored | rejected
   command           String?
@@ -223,7 +227,7 @@ model InboundMessage {
 model AuditLog {
   id         String   @id @default(cuid())
   userId     String
-  actor      String // user | sms | sync | system
+  actor      String // user | sms | email | sync | system
   action     String
   entityType String?
   entityId   String?
@@ -237,7 +241,7 @@ model AuditLog {
 model JobExecution {
   id         String    @id @default(cuid())
   userId     String?
-  type       String // calendar_sync | briefing_send
+  type       String // calendar_sync | briefing_send | email_reply_check
   status     String    @default("running") // running | succeeded | failed
   attempt    Int       @default(1)
   error      String?

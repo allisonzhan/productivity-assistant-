@@ -2,14 +2,15 @@ import { DateTime } from "luxon";
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import { getCurrentUser } from "@/server/auth/session";
-import { GOOGLE_CALENDAR } from "@/server/integrations/google-credentials";
+import { GMAIL, GOOGLE_CALENDAR } from "@/server/integrations/google-credentials";
+import { GMAIL_READ_SCOPE, GMAIL_SEND_SCOPE } from "@/server/auth/google-oauth";
 import { buildSnapshot, loadBriefingInputs } from "@/server/briefings/generate";
-import { MAX_SEND_ATTEMPTS } from "@/server/briefings/send";
+import { MAX_SEND_ATTEMPTS, getBriefingChannel } from "@/server/briefings/send";
 import { listOpenTasks } from "@/server/tasks/service";
 import { dateOnlyToISO } from "@/server/time";
-import { retryBriefingAction, setTaskStatusAction, syncCalendarAction } from "@/app/actions";
+import { retryBriefingAction, setBriefingChannelAction, setTaskStatusAction, syncCalendarAction } from "@/app/actions";
 import { Alert, Badge, Button, Card, statusTone } from "@/components/ui";
-import { PhoneForms, SendBriefingForm, SimulatorForm } from "@/components/forms";
+import { CheckRepliesForm, PhoneForms, SendBriefingForm, SimulatorForm } from "@/components/forms";
 
 export const dynamic = "force-dynamic";
 
@@ -24,30 +25,37 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
     return (
       <main className="mx-auto max-w-md space-y-4 px-4 py-16">
         <h1 className="text-2xl font-semibold">Productive Assistant</h1>
-        <p className="text-muted">Connect Google Calendar to import your schedule and get daily SMS briefings.</p>
+        <p className="text-muted">Connect Google Calendar to import your schedule and get daily briefings by email.</p>
         {error && <Alert tone="error">{error}</Alert>}
         <a href="/api/auth/google/start" className="inline-block rounded-md bg-accent px-4 py-2 font-medium text-white">
-          Sign in with Google &amp; connect Calendar
+          Sign in with Google &amp; connect Calendar + Gmail
         </a>
       </main>
     );
   }
 
   const zone = user.timezone;
-  const simulator = env().SMS_PROVIDER === "simulator";
-  const [integration, inputs, openTasks, doneTasks, latestBriefing, deliveries, inbound] = await Promise.all([
-    prisma.integration.findUnique({ where: { userId_provider: { userId: user.id, provider: GOOGLE_CALENDAR } } }),
+  const [integration, gmail, channel, inputs, openTasks, doneTasks, latestBriefing, deliveries, inbound] = await Promise.all([
+    prisma.integration.findUnique({
+      where: { userId_provider: { userId: user.id, provider: GOOGLE_CALENDAR } },
+      include: { credential: { select: { scope: true } } },
+    }),
+    prisma.integration.findUnique({ where: { userId_provider: { userId: user.id, provider: GMAIL } } }),
+    getBriefingChannel(user.id),
     loadBriefingInputs(user.id, zone),
     listOpenTasks(user.id),
     prisma.task.findMany({ where: { userId: user.id, status: "done", deletedAt: null }, orderBy: { completedAt: "desc" }, take: 5 }),
     prisma.briefing.findFirst({
-      where: { userId: user.id, kind: { not: "sms_today" } },
+      where: { userId: user.id, kind: { notIn: ["sms_today", "email_today"] } },
       orderBy: { createdAt: "desc" },
       include: { deliveryAttempts: { orderBy: { createdAt: "asc" } } },
     }),
     prisma.deliveryAttempt.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 10 }),
     prisma.inboundMessage.findMany({ where: { userId: user.id }, orderBy: { receivedAt: "desc" }, take: 5 }),
   ]);
+  const simulator = channel === "sms" && env().SMS_PROVIDER === "simulator";
+  const grantedScopes = integration?.credential?.scope.split(" ") ?? [];
+  const gmailGranted = grantedScopes.includes(GMAIL_SEND_SCOPE) && grantedScopes.includes(GMAIL_READ_SCOPE);
   const snapshot = buildSnapshot(inputs.events, inputs.tasks, zone, inputs.today);
   const eventsById = new Map(inputs.events.map((e) => [e.id, e]));
   const [today, ...nextDays] = snapshot.days;
@@ -111,16 +119,54 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
           )}
         </Card>
 
-        <Card title="SMS">
-          {user.phoneVerifiedAt ? (
-            <p className="text-sm">
-              <Badge tone="green">verified</Badge> {user.phoneE164}
-              {user.smsOptOut && <> · <Badge tone="red">opted out (STOP)</Badge></>}
-            </p>
-          ) : (
-            <PhoneForms />
-          )}
-        </Card>
+        {channel === "email" ? (
+          <Card title="Email" actions={gmailGranted && <CheckRepliesForm />}>
+            <div className="space-y-2 text-sm">
+              <p>
+                Briefings are sent from your Gmail to <strong>{user.email}</strong>. Reply to one, then check for replies.
+              </p>
+              {!gmailGranted ? (
+                <Alert tone="error">
+                  Gmail access was not granted, so email briefings can&apos;t be sent.{" "}
+                  <a className="underline" href="/api/auth/google/start">Reconnect Google</a> and allow Gmail.
+                </Alert>
+              ) : (
+                <p>
+                  <Badge tone={statusTone(gmail?.status ?? "pending")}>{gmail?.status ?? "not checked yet"}</Badge> Last reply
+                  check: {fmt(gmail?.lastSuccessAt, zone)}
+                </p>
+              )}
+              {gmail?.lastError && (
+                <Alert tone="error">
+                  Reply check failed at {fmt(gmail.lastErrorAt, zone)}: {gmail.lastError}{" "}
+                  {gmail.status === "reauth_required" ? (
+                    <a className="underline" href="/api/auth/google/start">Reconnect Google</a>
+                  ) : (
+                    "Use Check for replies to retry."
+                  )}
+                </Alert>
+              )}
+              {user.emailOptOut && (
+                <form action={setBriefingChannelAction} className="flex items-center gap-2">
+                  <Badge tone="red">opted out (STOP)</Badge>
+                  <input type="hidden" name="channel" value="email" />
+                  <Button variant="secondary">Resume email briefings</Button>
+                </form>
+              )}
+            </div>
+          </Card>
+        ) : (
+          <Card title="SMS">
+            {user.phoneVerifiedAt ? (
+              <p className="text-sm">
+                <Badge tone="green">verified</Badge> {user.phoneE164}
+                {user.smsOptOut && <> · <Badge tone="red">opted out (STOP)</Badge></>}
+              </p>
+            ) : (
+              <PhoneForms />
+            )}
+          </Card>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -164,10 +210,13 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
                   <span className="flex-1">{t.title}</span>
                   {due && <Badge tone={overdue ? "red" : "gray"}>{overdue ? "overdue " : ""}{DateTime.fromISO(due).toFormat("ccc LLL d")}</Badge>}
                   {t.sourceType === "sms" && <Badge tone="purple">via SMS</Badge>}
+                  {t.sourceType === "email" && <Badge tone="purple">via email</Badge>}
                 </li>
               );
             })}
-            {openTasks.length === 0 && <li className="text-muted">No open tasks. Text &quot;Add task: …&quot; to add one.</li>}
+            {openTasks.length === 0 && (
+              <li className="text-muted">No open tasks. Reply &quot;Add task: …&quot; to a briefing to add one.</li>
+            )}
           </ul>
           {doneTasks.length > 0 && (
             <details className="mt-3 text-sm text-muted">
@@ -211,7 +260,19 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
         )}
       </Card>
 
-      <Card title="Briefing">
+      <Card
+        title="Briefing"
+        actions={
+          <form action={setBriefingChannelAction} className="flex items-center gap-1 text-sm">
+            <span className="text-muted">Send by</span>
+            {(["email", "sms"] as const).map((c) => (
+              <Button key={c} name="channel" value={c} variant={channel === c ? "primary" : "secondary"} aria-pressed={channel === c}>
+                {c === "email" ? "Email" : "SMS (paused)"}
+              </Button>
+            ))}
+          </form>
+        }
+      >
         <SendBriefingForm />
         {latestBriefing && (
           <div className="mt-3 space-y-2">
@@ -221,6 +282,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
               {latestBriefing.deliveryAttempts.map((a) => (
                 <li key={a.id}>
                   Attempt {a.attempt}: <Badge tone={statusTone(a.status)}>{a.status}</Badge> via {a.provider}
+                  {a.provider === "gmail" && a.status === "sent" && <span className="text-muted"> · delivery confirms on the next reply check</span>}
                   {a.error && <span className="text-red-600 dark:text-red-400"> · {a.error}</span>}
                 </li>
               ))}
@@ -242,11 +304,11 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
-        <Card title={simulator ? "Outbox (includes SIMULATED)" : "Delivery history"}>
+        <Card title={env().SMS_PROVIDER === "simulator" ? "Delivery history (SMS entries are SIMULATED)" : "Delivery history"}>
           <ul className="space-y-2 text-sm">
             {deliveries.map((d) => (
               <li key={d.id} className="border-b border-border pb-2 last:border-0">
-                <Badge tone={statusTone(d.status)}>{d.status}</Badge> {d.purpose} → {d.to} · {fmt(d.createdAt, zone, "LLL d h:mm:ss a")}
+                <Badge tone={statusTone(d.status)}>{d.status}</Badge> {d.channel} {d.purpose} → {d.to} · {fmt(d.createdAt, zone, "LLL d h:mm:ss a")}
                 {d.error && <p className="text-red-600 dark:text-red-400">{d.error}</p>}
                 {/* Never display real verification codes: that would bypass proof of phone ownership. */}
                 {(d.provider === "simulator" || d.purpose !== "verification") && (
@@ -257,7 +319,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
             {deliveries.length === 0 && <li className="text-muted">No messages yet.</li>}
           </ul>
         </Card>
-        <Card title="Inbound SMS">
+        <Card title="Inbound replies">
           <ul className="space-y-2 text-sm">
             {inbound.map((m) => (
               <li key={m.id}>

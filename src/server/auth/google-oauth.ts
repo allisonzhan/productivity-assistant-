@@ -3,13 +3,15 @@ import { z } from "zod";
 import { env } from "@/server/env";
 import { decrypt, encrypt, randomToken } from "@/server/crypto";
 
-// Least privilege: identity + read-only calendar. Calendar writes come later with confirmation.
-export const GOOGLE_SCOPES = [
-  "openid",
-  "email",
-  "profile",
-  "https://www.googleapis.com/auth/calendar.readonly",
-];
+export const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+// Briefings are sent from the user's own Gmail to themselves; replies are read back from those
+// threads only. Optional at consent: without them, the email channel shows "reconnect".
+export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+export const GMAIL_READ_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+
+// Least privilege: identity + read-only calendar + Gmail send/read for the email channel.
+// Calendar writes come later with confirmation.
+export const GOOGLE_SCOPES = ["openid", "email", "profile", CALENDAR_SCOPE, GMAIL_SEND_SCOPE, GMAIL_READ_SCOPE];
 
 export const OAUTH_COOKIE = "pa_oauth";
 const OAUTH_TTL_MS = 10 * 60 * 1000;

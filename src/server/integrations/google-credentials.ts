@@ -3,6 +3,8 @@ import { decrypt, encrypt } from "@/server/crypto";
 import { GoogleOAuthError, refreshAccessToken, type GoogleTokenResponse } from "@/server/auth/google-oauth";
 
 export const GOOGLE_CALENDAR = "google_calendar";
+// Health of the email reply check. It has no credential of its own: Gmail uses the Google tokens.
+export const GMAIL = "gmail";
 
 export class ReauthRequiredError extends Error {
   constructor(message = "Google access was revoked or expired. Reconnect Google Calendar.") {
@@ -36,6 +38,28 @@ export async function saveGoogleTokens(userId: string, tokens: GoogleTokenRespon
     },
   });
   return integration;
+}
+
+/** Whether the stored Google grant includes `scope` (Google's consent screen lets users untick scopes). */
+export async function hasGoogleScope(userId: string, scope: string): Promise<boolean> {
+  const integration = await prisma.integration.findUnique({
+    where: { userId_provider: { userId, provider: GOOGLE_CALENDAR } },
+    include: { credential: { select: { scope: true } } },
+  });
+  return !!integration?.credential?.scope.split(" ").includes(scope);
+}
+
+/** Access token for a Gmail call; requires that the user granted `scope`. */
+export async function getGmailAccessToken(userId: string, scope: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+  const integration = await prisma.integration.findUnique({
+    where: { userId_provider: { userId, provider: GOOGLE_CALENDAR } },
+    include: { credential: { select: { scope: true } } },
+  });
+  if (!integration?.credential) throw new ReauthRequiredError("Google is not connected. Sign in with Google again.");
+  if (!integration.credential.scope.split(" ").includes(scope)) {
+    throw new ReauthRequiredError("Gmail access was not granted. Reconnect Google and allow Gmail access.");
+  }
+  return getGoogleAccessToken(integration.id, fetchImpl);
 }
 
 /** Returns a usable access token, refreshing it if it expires within 60s. */

@@ -25,7 +25,9 @@ export async function makeUser(opts: { phone?: string | null; timezone?: string 
   });
 }
 
-export async function connectGoogle(userId: string, opts: { expiresAt?: Date; refreshToken?: string | null } = {}) {
+export const GMAIL_SCOPES = "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly";
+
+export async function connectGoogle(userId: string, opts: { expiresAt?: Date; refreshToken?: string | null; scope?: string } = {}) {
   return prisma.integration.create({
     data: {
       userId,
@@ -35,7 +37,7 @@ export async function connectGoogle(userId: string, opts: { expiresAt?: Date; re
           accessTokenEnc: encrypt("valid-access-token"),
           refreshTokenEnc: opts.refreshToken === null ? null : encrypt(opts.refreshToken ?? "refresh-token"),
           expiresAt: opts.expiresAt ?? new Date(Date.now() + 3600_000),
-          scope: "openid https://www.googleapis.com/auth/calendar.readonly",
+          scope: opts.scope ?? "openid https://www.googleapis.com/auth/calendar.readonly",
         },
       },
     },
