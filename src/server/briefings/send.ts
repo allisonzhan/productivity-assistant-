@@ -6,6 +6,8 @@ import { sendSms } from "@/server/delivery/sms";
 import { sendEmail } from "@/server/delivery/email";
 import { audit } from "@/server/audit/log";
 import { dateOnlyToISO } from "@/server/time";
+import type { BriefingSnapshot } from "@/server/briefings/generate";
+import { renderEmailHtml, renderEmailText } from "@/server/briefings/render-email";
 
 export const MAX_SEND_ATTEMPTS = 3;
 
@@ -85,12 +87,17 @@ export async function sendBriefingEmail(userId: string, briefingId: string, opts
   if (user.emailOptOut) throw new BriefingSendError("You replied STOP to a briefing email. Resume email briefings on the dashboard.");
   const attemptNumber = nextAttemptNumber(briefing);
 
+  // Rendered from the stored snapshot (never live provider data). Snapshots from before the
+  // email layout existed have no freeSlots; they keep the original text format.
+  const snapshot = briefing.snapshot as unknown as BriefingSnapshot;
+  const rich = Array.isArray(snapshot?.freeSlots);
   const attempt = await runJob({ type: "briefing_send", userId, metadata: { briefingId, channel: "email" } }, () =>
     sendEmail({
       userId,
       to: user.email,
       subject: `Your briefing for ${DateTime.fromISO(dateOnlyToISO(briefing.forDate)).toFormat("ccc LLL d")}`,
-      body: `${briefing.content}${EMAIL_FOOTER}`,
+      body: rich ? renderEmailText(snapshot) : `${briefing.content}${EMAIL_FOOTER}`,
+      html: rich ? renderEmailHtml(snapshot) : undefined,
       purpose: "briefing",
       briefingId,
       attempt: attemptNumber,

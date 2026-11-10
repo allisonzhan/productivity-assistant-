@@ -2,8 +2,21 @@ import { DateTime } from "luxon";
 import type { Event, Task } from "@prisma/client";
 import { prisma } from "@/server/db";
 import { addDaysISO, dateOnlyToISO, isoToDateOnly, localDayBounds, todayIn } from "@/server/time";
+import { computeFreeSlots, type FreeSlot } from "@/server/scheduling/availability";
 
-export type BriefingItem = { id: string; kind: "event" | "task"; title: string; date: string; time: string | null };
+export type BriefingItem = {
+  id: string;
+  kind: "event" | "task";
+  title: string;
+  date: string;
+  time: string | null;
+  /** Tasks only: stable number for this briefing, so a reply can say "done with 2". */
+  n?: number;
+  priority?: string;
+};
+
+/** A suggested (not confirmed) pairing of an open task with a free block today. */
+export type FocusSuggestion = { n?: number; taskId: string; title: string; due: string | null; slot: FreeSlot | null };
 
 export type BriefingSnapshot = {
   generatedAt: string;
@@ -12,7 +25,34 @@ export type BriefingSnapshot = {
   days: { date: string; events: BriefingItem[]; tasksDue: BriefingItem[] }[];
   overdue: BriefingItem[];
   undated: BriefingItem[];
+  /** Added in gate-ai-upgrade; absent on older stored snapshots. */
+  freeSlots?: FreeSlot[];
+  focus?: FocusSuggestion[];
 };
+
+const PRIORITY_RANK: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const MAX_FOCUS = 3;
+
+/**
+ * Pure, deterministic: the most urgent open tasks (overdue, then soonest due, then priority),
+ * paired with today's largest free blocks. Labeled "suggested" wherever it is shown.
+ */
+export function suggestFocus(s: Pick<BriefingSnapshot, "overdue" | "days">, freeSlots: FreeSlot[]): FocusSuggestion[] {
+  const candidates = [...s.overdue, ...s.days.flatMap((d) => d.tasksDue)]
+    .map((t, order) => ({ t, order }))
+    .sort((a, b) => {
+      if (a.t.date !== b.t.date) return a.t.date < b.t.date ? -1 : 1;
+      const pa = PRIORITY_RANK[a.t.priority ?? "medium"] ?? 2;
+      const pb = PRIORITY_RANK[b.t.priority ?? "medium"] ?? 2;
+      return pa - pb || a.order - b.order;
+    })
+    .slice(0, MAX_FOCUS)
+    .map(({ t }) => t);
+  // The biggest blocks go to the most urgent tasks; then they are shown in time order.
+  const bySize = [...freeSlots].sort((a, b) => b.minutes - a.minutes);
+  const picks = candidates.map((t, i) => ({ n: t.n, taskId: t.id, title: t.title, due: t.date || null, slot: bySize[i] ?? null }));
+  return picks.sort((a, b) => (a.slot && b.slot ? a.slot.start.localeCompare(b.slot.start) : a.slot ? -1 : b.slot ? 1 : 0));
+}
 
 const PREVIEW_DAYS = 7;
 
@@ -70,13 +110,19 @@ export function buildSnapshot(events: Event[], tasks: Task[], zone: string, toda
   for (const t of tasks) {
     const due = t.dueDate ? dateOnlyToISO(t.dueDate) : t.dueAt ? DateTime.fromJSDate(t.dueAt, { zone }).toISODate()! : null;
     const time = t.dueAt ? DateTime.fromJSDate(t.dueAt, { zone }).toFormat("h:mma").toLowerCase() : null;
-    const item: BriefingItem = { id: t.id, kind: "task", title: t.title, date: due ?? "", time };
+    const item: BriefingItem = { id: t.id, kind: "task", title: t.title, date: due ?? "", time, priority: t.priority };
     if (!due) undated.push(item);
     else if (due < today) overdue.push(item);
     else byDate.get(due)?.tasksDue.push(item);
   }
 
-  return { generatedAt: now.toISOString(), timezone: zone, today, days, overdue, undated };
+  // Number tasks in the order the email lists them: overdue, by day, then undated.
+  let n = 0;
+  for (const item of [...overdue, ...days.flatMap((d) => d.tasksDue), ...undated]) item.n = ++n;
+
+  const freeSlots = computeFreeSlots(events, today, zone, {}, now);
+  const focus = suggestFocus({ overdue, days }, freeSlots);
+  return { generatedAt: now.toISOString(), timezone: zone, today, days, overdue, undated, freeSlots, focus };
 }
 
 function list(items: BriefingItem[], max = 3): string {

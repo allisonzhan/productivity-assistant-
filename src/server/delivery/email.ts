@@ -15,6 +15,8 @@ export async function sendEmail(input: {
   to: string;
   subject: string;
   body: string;
+  /** Optional HTML alternative (the plain body is always sent and is what gets stored). */
+  html?: string;
   purpose: "briefing" | "reply";
   briefingId?: string;
   attempt?: number;
@@ -47,6 +49,7 @@ export async function sendEmail(input: {
       to: input.to,
       subject: input.subject,
       body: input.body,
+      html: input.html,
       kind: input.purpose,
       inReplyTo: input.thread?.inReplyTo,
     });

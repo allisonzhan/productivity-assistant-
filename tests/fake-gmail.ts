@@ -5,7 +5,7 @@ type FakeMessage = { id: string; threadId: string; labelIds: string[]; internalD
 /** In-memory Gmail: messages.send and threads.get, enough to exercise the real code paths. */
 export function fakeGmail() {
   const messages: FakeMessage[] = [];
-  const sends: { headers: Record<string, string>; text: string; threadId?: string }[] = [];
+  const sends: { headers: Record<string, string>; text: string; html?: string; threadId?: string }[] = [];
   let n = 0;
   const add = (m: Omit<FakeMessage, "id">) => {
     const id = `m${++n}`;
@@ -17,10 +17,24 @@ export function fakeGmail() {
     if (auth !== "Bearer valid-access-token") return jsonResponse({ error: { message: "Invalid Credentials" } }, 401);
     if (url.endsWith("/messages/send")) {
       const { raw, threadId } = JSON.parse(String(init!.body)) as { raw: string; threadId?: string };
-      const [head, body] = Buffer.from(raw, "base64url").toString("utf8").split("\r\n\r\n");
+      const mime = Buffer.from(raw, "base64url").toString("utf8");
+      const head = mime.slice(0, mime.indexOf("\r\n\r\n"));
       const headers = Object.fromEntries(head.split("\r\n").map((l) => [l.slice(0, l.indexOf(":")), l.slice(l.indexOf(":") + 2)]));
-      const text = Buffer.from(body.replace(/\r\n/g, ""), "base64").toString("utf8");
-      sends.push({ headers, text, threadId });
+      const decode = (b: string) => Buffer.from(b.replace(/\r\n/g, ""), "base64").toString("utf8");
+      const boundary = /boundary="([^"]+)"/.exec(headers["Content-Type"] ?? "")?.[1];
+      let text: string;
+      let html: string | undefined;
+      if (boundary) {
+        const parts = mime.split(`--${boundary}`).slice(1, -1).map((p) => {
+          const i = p.indexOf("\r\n\r\n");
+          return { type: p.slice(0, i), body: decode(p.slice(i + 4)) };
+        });
+        text = parts.find((p) => p.type.includes("text/plain"))!.body;
+        html = parts.find((p) => p.type.includes("text/html"))?.body;
+      } else {
+        text = decode(mime.slice(head.length + 4));
+      }
+      sends.push({ headers, text, html, threadId });
       const tid = threadId ?? `t${n + 1}`;
       // Mail to yourself lands in your own inbox, which is what "delivered" checks for.
       const id = add({ threadId: tid, labelIds: ["SENT", "INBOX"], internalDate: String(Date.now()), headers: { ...headers, "Message-ID": `<gen${n}@x>` }, text });

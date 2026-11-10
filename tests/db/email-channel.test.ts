@@ -26,7 +26,9 @@ describe.skipIf(!hasDb)("email briefing channel (Gmail)", () => {
     expect(attempt.threadId).toBeTruthy();
     expect(gmail.sends[0].headers.To).toBe(user.email);
     expect(gmail.sends[0].headers["X-PA-Generated"]).toBe("briefing");
-    expect(gmail.sends[0].text).toContain('Reply to this email with one line');
+    expect(gmail.sends[0].text).toContain("Reply to this email (first line)");
+    expect(gmail.sends[0].text).toContain("TODAY'S SCHEDULE");
+    expect(gmail.sends[0].html).toContain("Free time today");
   });
 
   it("turns a reply into exactly one task, confirms delivery, and ignores its own mail and other senders", async () => {
