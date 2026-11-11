@@ -1,11 +1,19 @@
 # productivity-assistant
 
-A student-first personal productivity web app. It imports your Google Calendar, builds daily briefings from stored data, emails them from your own Gmail, and turns replies like `Add task: finish reading Friday` into tasks. SMS (Twilio) is implemented but paused, so Gate 1 needs no paid services.
+A student-first daily briefing you can talk back to. Every morning it emails you, from your own Gmail, a briefing built from your Google Calendar, your tasks and your Canvas assignments: today's schedule, what's due and overdue, your free time with a suggested focus, and the next seven days. You manage your day by replying to that email, either with fixed commands (`Add task: finish reading Friday`, `TODAY`, `TASKS`) or in plain language ("what's due this week?", "push my essay to Sunday", "done with the lab"). Changes always wait for your **YES**.
 
-**Status:** Gate 1 (end-to-end vertical slice) is implemented and covered by automated tests. Live acceptance with a real Google account (Calendar + Gmail) is still pending; see [PROGRESS.md](PROGRESS.md). Context and rules: [CLAUDE.md](CLAUDE.md). Roadmap: [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).
+**Status** (details and evidence in [PROGRESS.md](PROGRESS.md)):
+- Gate 1, the end-to-end loop (Calendar → briefing → Gmail → reply → task), passed live on 2026-10-27.
+- Gate 2 Phase A (the worker that sends the morning briefing and checks replies on a schedule) has run live.
+- The gate-ai-upgrade steps (richer briefing, Canvas deadlines, natural-language replies, reply-quality eval) are built and pass automated tests against fake Google/Canvas/Claude servers. **Their live verification is still pending.**
+
+Rules for contributors (human or AI): [CLAUDE.md](CLAUDE.md). Roadmap: [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md).
 
 ## Stack
-Next.js 15 (App Router) · React 19 · TypeScript · PostgreSQL 16 · Prisma 6 · Tailwind v4 · Luxon · Zod · Vitest. Google OAuth, Calendar and Gmail over REST (no SDK); Twilio over REST (no SDK).
+Next.js 15 (App Router) · React 19 · TypeScript · PostgreSQL 16 · Prisma 6 · pg-boss · Tailwind v4 · Luxon · Zod · Vitest.
+- Google OAuth, Calendar, Gmail and Canvas are called over REST (no SDKs).
+- Claude is called through `@anthropic-ai/sdk`.
+- Twilio is called over REST; SMS is implemented but paused.
 
 ## Setup
 ```bash
@@ -13,82 +21,141 @@ docker compose up -d db        # Postgres on :5432, also creates productive_assi
 npm install                    # runs prisma generate
 cp .env.example .env           # fill in values (see below)
 npx prisma migrate dev         # apply migrations
-npm run dev                    # http://localhost:3000
+npm run dev                    # web app: http://localhost:3000
+npm run worker                 # second terminal: scheduled briefings, reply checks, syncs
 ```
-npm 11 may ask you to approve install scripts. Approve them with `npm approve-scripts @prisma/client @prisma/engines prisma esbuild unrs-resolver`.
+npm 11 may ask you to approve install scripts. Approve them with `npm approve-scripts @prisma/client @prisma/engines prisma esbuild unrs-resolver`. On PowerShell, use `npm.cmd` if `npm` is blocked by the execution policy.
+
+Then, in the app:
+1. Sign in with Google.
+2. Set your morning time under **Schedule settings**.
+3. Optionally paste a Canvas access token on the **Canvas** card.
 
 ## Environment variables
 | Variable | Purpose |
 |---|---|
-| `APP_URL` | Browser base URL; the OAuth redirect is `${APP_URL}/api/auth/google/callback` |
-| `PUBLIC_URL` | SMS only. Public HTTPS URL Twilio calls (a tunnel or deployment). Signatures are validated against it, so it must match Twilio's configuration exactly |
+| `APP_URL` | Browser base URL. The OAuth redirect is `${APP_URL}/api/auth/google/callback`; briefing emails link to `${APP_URL}/replies` |
 | `DEFAULT_TIMEZONE` | Fallback IANA zone if the Google calendar's timezone can't be read |
 | `DATABASE_URL` / `TEST_DATABASE_URL` | App database and a separate test database (the tests wipe it) |
-| `ENCRYPTION_KEY` | 32-byte base64 key for AES-256-GCM encryption of OAuth tokens. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `ENCRYPTION_KEY` | 32-byte base64 key for AES-256-GCM encryption of OAuth and Canvas tokens. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth web client |
-| `SMS_PROVIDER` | SMS only (paused). `twilio` (real) or `simulator` (local only, labeled SIMULATED everywhere) |
-| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | SMS only (paused). Twilio credentials and your Twilio number (E.164) |
-| `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` | Not used yet (Gate 2+) |
+| `CANVAS_BASE_URL` | Your Canvas site (default `https://canvas.vt.edu`). The access token itself is pasted in the app and stored encrypted |
+| `ANTHROPIC_API_KEY` | Enables natural-language replies. Without it, replies use the fixed commands only |
+| `ANTHROPIC_MODEL` | Model for replies and `npm run eval` (default `claude-opus-5-5`) |
+| `AGENT_ENABLED` | `true` (default) or `false` to turn natural-language replies off |
+| `PUBLIC_URL`, `SMS_PROVIDER`, `TWILIO_*` | SMS only (paused). See [Twilio](#twilio-paused) |
 
 ## Provider configuration
-**Google**
+### Google
 1. In Google Cloud Console, create a project and enable the **Google Calendar API** and the **Gmail API**.
-2. Set up the OAuth consent screen: External, Testing mode, and add your Google account as a test user.
+2. Set up the OAuth consent screen (External) and **publish it ("In production")**. In *Testing* mode, Google expires refresh tokens after 7 days, which silently stops the morning briefing (this caused a real outage on 2026-11-02). An unverified app in production is fine for personal use; you will see an "unverified app" warning when you sign in.
 3. Create an OAuth client of type *Web application* with the redirect URI `http://localhost:3000/api/auth/google/callback` (plus your deployed URL).
-4. Scopes requested: `openid email profile calendar.readonly gmail.send gmail.readonly`. Gmail is used only to send briefings from your mailbox to yourself and to read replies in those briefing threads. You may untick Gmail at consent; the email channel then shows *Reconnect Google*. In Testing mode, refresh tokens expire after 7 days; the app then shows *Reconnect Google*.
+4. The app requests the scopes `openid email profile calendar.readonly gmail.send gmail.readonly`. Gmail is used only to send briefings from your mailbox to yourself and to read replies in the threads the app started.
 
-**Twilio (paused; only needed if you switch briefings to SMS)**
+If Google access lapses anyway, the dashboard shows **Reconnect Google** and the worker prints an hourly warning.
+
+### Canvas
+In Canvas, open **Account → Settings → New Access Token**, then paste the token on the dashboard's **Canvas** card.
+- The token is checked against Canvas and stored encrypted.
+- Assignments from active courses (due from 7 days ago to 60 days ahead) sync hourly, and again right before each scheduled briefing.
+- Canvas owns each assignment's title, due time, link, course and submission state. Your notes, priority and done status are kept on every re-sync.
+- Submitted assignments are hidden from the briefing.
+
+### Claude (natural-language replies)
+Create an API key at console.anthropic.com and set `ANTHROPIC_API_KEY` in `.env`, then restart the worker. A short reply costs a few cents at most.
+
+### Twilio (paused)
+Only needed if you switch briefings to SMS.
 1. Buy an SMS-capable number.
-2. Under the number's *Messaging configuration*, set "A message comes in" to **Webhook, HTTP POST** at `${PUBLIC_URL}/api/webhooks/twilio/sms`.
-3. Status callbacks are set per message (`${PUBLIC_URL}/api/webhooks/twilio/status`), so no console setup is needed.
-4. US delivery requires **A2P 10DLC registration** (or toll-free verification). Trial accounts can only text verified numbers and prefix every message.
-5. For local development, expose the app with `ngrok http 3000` (or `cloudflared tunnel`) and set `PUBLIC_URL` to the tunnel URL.
+2. Point its inbound webhook (HTTP POST) at `${PUBLIC_URL}/api/webhooks/twilio/sms`.
+3. US delivery needs A2P 10DLC registration.
 
-## Vertical-slice walkthrough (acceptance, email channel)
-1. Open the app and choose **Sign in with Google & connect Calendar + Gmail**. Allow Calendar and Gmail. The first sync runs automatically.
-2. The dashboard shows today's and the next seven days' events in your calendar's timezone. Hover the *Google* link to see the stored external event ID.
-3. Choose **Generate & send briefing** (Briefing → Send by **Email**). The attempt shows `sent` once Gmail returns a message ID. The email arrives in your inbox from yourself.
-4. Reply to that email with `Add task: finish reading Friday` as the first line.
-5. Choose **Check for replies** on the Email card. The briefing attempt advances to `delivered` (Gmail shows it in your inbox), the task is created, and a reply `Added: Finish reading (due Fri …)` lands in the same thread.
-6. The dashboard shows the task with a *via email* badge.
-7. Duplicate checks: choose **Sync now** again (the event count does not change) and **Check for replies** again (no second task; the reply check skips the app's own mail and messages it has already handled).
-8. Failure check: choose **Simulate failure** (a real Google request with an invalid token) or **Send with simulated failure** (a real Gmail request with an invalid token). A red error appears with **Retry sync** / **Retry send**.
+For local development, use a tunnel (`ngrok http 3000`) as `PUBLIC_URL`. With `SMS_PROVIDER=simulator`, SMS runs against a local outbox labeled SIMULATED and **does not prove live SMS**.
 
-Replies are only read from threads the app started, and only messages from your own address are acted on. Gate 1 checks replies when you click the button; a scheduled check arrives with the Gate 2 worker.
+## Using it
+### The morning briefing
+At your chosen time (your timezone, DST-safe), the worker emails you:
+- Today's events.
+- What's due today and what's overdue.
+- Free blocks of 30+ minutes, plus a **suggested** focus that pairs your most urgent tasks with your biggest free blocks. This is computed deterministically, not by an LLM.
+- The next seven days, with each deadline listed by day and Canvas items tagged with their course.
 
-**SMS (paused):** switch Briefing → Send by **SMS** to use the Twilio path (phone verification, signed webhooks, status callbacks). With `SMS_PROVIDER=simulator` it runs against a local outbox and **does not prove live SMS**.
+Tasks are numbered, so you can refer to them by number in a reply. The briefing is built only from stored data, and each one is sent once.
 
-## Reply commands (email and SMS)
-`ADD <task> [today|tomorrow|<weekday>|M/D]` (also `Add task:` and `todo`), `TODAY`, `TASKS`, `HELP`, `STOP`/`START`. Ambiguous dates such as "next friday" get a clarification reply instead of a guess. `WEEK`, `MONTH` and `DONE` are coming in Gate 2.
+### Replying
+Reply in the briefing's thread. Replies are picked up within 5 minutes, or immediately with **Check for replies** on the dashboard.
 
-## Migrations
-- `npx prisma migrate dev --name <change>` during development. Commit the generated `prisma/migrations`.
-- `npm run db:deploy` (`prisma migrate deploy`) in production.
+| You write | What happens |
+|---|---|
+| `Add task: finish reading Friday` (also `ADD …`, `todo …`) | Task created immediately, no model call |
+| `TODAY` / `TASKS` / `HELP` | Today's briefing / open tasks / the command list |
+| `STOP` / `START` | Stop or resume email briefings |
+| A question: "what's due this week?", "when am I free Thursday?" | Answered right away from your stored calendar, tasks and assignments |
+| A change: "push my essay to Sunday", "done with 2", "make the lab high priority" | The assistant replies with a proposal. **Nothing changes until you reply `YES`** (in the same thread, within 24 hours). `NO` or `CANCEL` drops it |
 
-## Worker execution
-Gate 1 has no long-running worker. Sync and briefing sends run on demand (OAuth callback and dashboard actions), and each run is recorded in `JobExecution`. Scheduled 8 AM / 7 PM briefings and periodic sync move to a durable pg-boss worker (`npm run worker`) in Gate 2.
+How replies are handled:
+- **Dates are never computed by the model.** "Sunday", "tomorrow", "11/14" and "Nov 20" are resolved by code in your timezone. "next Friday" is ambiguous, so you get a question back.
+- **Canvas owns its deadlines,** so the assistant can't move a Canvas due date.
+- **Your emails, event titles and Canvas text are treated as data, never as instructions,** and no change happens without your YES.
+- **Each reply is handled exactly once,** even if the reply check runs again.
+- **Every tool call is written to the audit log.**
+- **If the model is unavailable,** the reply says so and the fixed commands keep working.
 
-## Tests
+> `YES` used to mean START; now it only confirms proposals. To resume briefings after `STOP`, reply `START`.
+
+### Checking reply quality
+Every reply you send, and what the assistant did with it, is listed at **`/replies`** (linked from the dashboard and the briefing footer). Mark each one ✓ right or ✗ wrong. For a wrong one, optionally say what it should have done: answered, asked, added a task, moved a task to a date, or marked one done.
+
+```bash
+npm run eval                 # what would run + estimated cost; no API calls
+npm run eval -- --oracle     # free self-check of the grader against the recorded runs
+npm run eval -- --yes        # replay all marked replies through the current agent (paid)
+#   options: --model claude-sonnet-5-5  --reps 2  --variant v1  --limit 20  --timeout-s 90
+```
+The eval replays each marked reply with the original date, timezone and lookup results, so later data changes don't affect it, and it never writes to your tasks. It grades what the assistant would **do** (the proposed changes, or none for a question) and reports:
+- the overall accuracy with a 95% confidence interval;
+- accuracy by intent (question / add / done / reschedule / edit / clarify);
+- every failure, with the reason.
+
+Results go to `.claude/hillclimb/email-replies/<variant>/` (per-case transcripts are git-ignored). The wording of answers is not graded.
+
+## Worker
+`npm run worker` runs these jobs with pg-boss (cron schedules stored in Postgres, schema `pgboss`):
+
+| Job | Every | Does |
+|---|---|---|
+| `scheduler-tick` | minute | Heartbeat. Creates and sends each briefing now due, refreshing stale Calendar/Canvas data first. Warns hourly if Google needs reconnecting |
+| `email-reply-check` | 5 min | Reads replies in recent briefing threads; retries assistant replies that died mid-run |
+| `calendar-sync` | 15 min | Google Calendar sync |
+| `canvas-sync` | hourly | Canvas assignment sync |
+
+Each briefing is sent exactly once: `ScheduledBriefing` is unique per user + kind + local date, and claims are atomic. Failed sends retry after 5 and 10 minutes, then show as failed. A briefing missed while the worker was off still goes out up to 4 hours late. The dashboard's **Automation** card shows whether the worker is running.
+
+## Development
 ```bash
 npm test                 # unit + DB integration tests (needs TEST_DATABASE_URL; DB tests are skipped otherwise)
 npm run lint && npm run typecheck && npm run build
 ```
-Coverage includes:
-- date and time parsing across timezones and DST
-- Google event normalization and all-day dates
-- sync dedup, deletion, provider failure and retry, revoked tokens, bounded retries
-- webhook signatures (Twilio's documented vector), duplicate webhook delivery, unknown and unverified senders
-- cross-user isolation, STOP/START, ambiguity clarification, rate limiting
-- briefing content, simulated and failed sends with bounded retries, out-of-order status callbacks
+- Tests never call real providers. Google, Gmail, Canvas and Claude are replaced by in-memory fakes (`tests/fake-*.ts`), and the test setup blanks `ANTHROPIC_API_KEY`.
+- Coverage includes:
+  - timezone/DST date handling, free-time computation and the email layout;
+  - sync dedup and deletion, provider failures and retries, revoked tokens;
+  - exactly-once replies and confirmations, prompt-injection attempts, model failures;
+  - the eval grader.
+- Schema changes: `npx prisma migrate dev --name <change>`, and commit `prisma/migrations`. Production: `npm run db:deploy`.
+- If `npm run build` fails with `EINVAL … readlink` under OneDrive, delete `.next` and rebuild.
 
 ## Deployment
-The app deploys to any Node host (Vercel, Render, Fly). Steps:
-1. Set all environment variables, with `APP_URL` and `PUBLIC_URL` pointing at the deployed HTTPS origin.
-2. Run `npm run db:deploy` against the production database.
-3. Add the production redirect URI in Google and the production webhook URL in Twilio.
+Any Node host works for the web app, but the worker must run continuously next to it. Today both run on a laptop.
+1. Set the environment variables with `APP_URL` on the deployed HTTPS origin.
+2. Run `npm run db:deploy`.
+3. Add the production redirect URI in Google.
+4. Run `npm run worker` as a long-lived process.
 
-## Limitations (current)
-- Sync covers the primary calendar only, with a windowed full sync (−1 to +30 days). Incremental `syncToken` sync and multiple calendars come in Gate 2.
-- No scheduled briefings, quiet hours, email channel, or task/event editing UI yet (Gate 2).
-- No LLM is used yet; SMS parsing is deterministic. Natural-language fallback comes in Gate 4.
-- Canvas, Gmail, Outlook and Discord are not started, by design (stop gate).
+## Limitations
+- Briefings and reply checks only happen while `npm run worker` is running (laptop). Free hosting is an open decision.
+- Replies are picked up every 5 minutes, not instantly.
+- Natural-language replies work by email only. SMS keeps the fixed commands, and SMS itself is paused.
+- If the app crashes between deciding and sending, that assistant reply is lost; it is never sent twice.
+- Google Calendar: primary calendar only, windowed sync (−1 to +30 days). Recurring events appear as individual instances.
+- Not built, by decision: calendar month/week views, Gmail triage, Outlook, Discord, evening/weekly briefings.

@@ -52,8 +52,8 @@ describe("parseSmsCommand", () => {
   });
 
   it("recognizes keywords and does not confuse words that start with 'add'", () => {
-    expect(parseSmsCommand("STOP", { zone: NY })).toEqual({ type: "stop" });
-    expect(parseSmsCommand("unsubscribe", { zone: NY })).toEqual({ type: "stop" });
+    expect(parseSmsCommand("STOP", { zone: NY })).toMatchObject({ type: "stop" });
+    expect(parseSmsCommand("unsubscribe", { zone: NY })).toMatchObject({ type: "stop" });
     expect(parseSmsCommand("start", { zone: NY })).toEqual({ type: "start" });
     expect(parseSmsCommand("Help", { zone: NY })).toEqual({ type: "help" });
     expect(parseSmsCommand("today", { zone: NY })).toEqual({ type: "today" });

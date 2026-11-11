@@ -1,11 +1,13 @@
 import { prisma } from "@/server/db";
 import { errorMessage, runJob } from "@/server/jobs/run";
 import { GMAIL_READ_SCOPE } from "@/server/auth/google-oauth";
-import { GMAIL, ReauthRequiredError, getGmailAccessToken } from "@/server/integrations/google-credentials";
+import { GMAIL, ReauthRequiredError, getGmailAccessToken, hasGoogleScope } from "@/server/integrations/google-credentials";
 import { GoogleApiError } from "@/server/calendar/google-client";
 import { getGmailThread, header } from "@/server/email/gmail-client";
-import { GENERATED_HEADER, extractReplyCommand, parseAddress, payloadText } from "@/server/email/mime";
+import { GENERATED_HEADER, extractReplyText, parseAddress, payloadText } from "@/server/email/mime";
 import { handleInboundMessage } from "@/server/sms/inbound";
+import { retryStuckAgentReplies } from "@/server/ai/handle-reply";
+import type { CreateMessage } from "@/server/ai/agent";
 
 const LOOKBACK_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -21,7 +23,7 @@ export type ReplyCheckResult =
  * Also marks the app's own sends "delivered" once Gmail shows them in the inbox.
  * Runs on demand in Gate 1; a scheduled worker polls in Gate 2.
  */
-export async function checkEmailReplies(userId: string, opts: { fetchImpl?: typeof fetch; now?: Date } = {}): Promise<ReplyCheckResult> {
+export async function checkEmailReplies(userId: string, opts: { fetchImpl?: typeof fetch; now?: Date; agent?: { create?: CreateMessage; enabled?: boolean } } = {}): Promise<ReplyCheckResult> {
   const now = opts.now ?? new Date();
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const integration = await prisma.integration.upsert({
@@ -32,12 +34,16 @@ export async function checkEmailReplies(userId: string, opts: { fetchImpl?: type
 
   try {
     return await runJob({ type: "email_reply_check", userId }, async () => {
-      const accessToken = await getGmailAccessToken(userId, GMAIL_READ_SCOPE, opts.fetchImpl);
       const recent = await prisma.deliveryAttempt.findMany({
         where: { userId, channel: "email", threadId: { not: null }, createdAt: { gte: new Date(now.getTime() - LOOKBACK_DAYS * DAY_MS) } },
         select: { threadId: true },
       });
       const threadIds = [...new Set(recent.map((a) => a.threadId!))];
+      // Nothing sent recently: skip Gmail (and the token refresh), but still report missing consent.
+      if (!threadIds.length && !(await hasGoogleScope(userId, GMAIL_READ_SCOPE))) {
+        throw new ReauthRequiredError("Gmail access was not granted. Reconnect Google and allow Gmail access.");
+      }
+      const accessToken = threadIds.length ? await getGmailAccessToken(userId, GMAIL_READ_SCOPE, opts.fetchImpl) : "";
       const [ownSends, seen] = await Promise.all([
         prisma.deliveryAttempt.findMany({ where: { userId, channel: "email", threadId: { in: threadIds }, providerMessageId: { not: null } } }),
         prisma.inboundMessage.findMany({ where: { userId, provider: "gmail", threadId: { in: threadIds } }, select: { providerMessageId: true } }),
@@ -76,16 +82,19 @@ export async function checkEmailReplies(userId: string, opts: { fetchImpl?: type
               provider: "gmail",
               providerMessageId: message.id,
               from,
-              body: extractReplyCommand(payloadText(message.payload)),
+              body: extractReplyText(payloadText(message.payload)),
               userId,
               thread: { threadId, subject: header(message, "Subject") ?? "Your briefing", messageIdHeader: header(message, "Message-ID") },
             },
             // Dates like "Friday" resolve relative to when the reply was written.
-            { now: message.internalDate ? new Date(Number(message.internalDate)) : now, fetchImpl: opts.fetchImpl },
+            { now: message.internalDate ? new Date(Number(message.internalDate)) : now, fetchImpl: opts.fetchImpl, create: opts.agent?.create, agentEnabled: opts.agent?.enabled },
           );
           processed++;
         }
       }
+
+      // Agent replies whose run died mid-way (worker restart) get another try.
+      if (threadIds.length) processed += await retryStuckAgentReplies(userId, { fetchImpl: opts.fetchImpl, create: opts.agent?.create });
 
       await prisma.integration.update({
         where: { id: integration.id },

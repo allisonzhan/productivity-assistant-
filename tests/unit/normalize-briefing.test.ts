@@ -44,7 +44,8 @@ function task(p: Partial<Task>): Task {
   return {
     id: p.id ?? "t", userId: "u", title: "Task", description: null, dueAt: null, dueDate: null, priority: "medium",
     status: "open", category: null, effortMinutes: null, sourceType: "manual", sourceRef: null, verification: "confirmed",
-    completedAt: null, deletedAt: null, createdAt: new Date(), updatedAt: new Date(), ...p,
+    completedAt: null, deletedAt: null, createdAt: new Date(), updatedAt: new Date(),
+    externalProvider: null, externalId: null, htmlLink: null, courseName: null, externalSubmittedAt: null, notes: null, ...p,
   };
 }
 

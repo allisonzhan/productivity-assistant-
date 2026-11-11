@@ -12,6 +12,9 @@ import { handleInboundSms } from "@/server/sms/inbound";
 import { checkEmailReplies } from "@/server/email/replies";
 import { setTaskStatus } from "@/server/tasks/service";
 import { errorMessage } from "@/server/jobs/run";
+import { PreferencesError, savePreferences } from "@/server/scheduling/preferences";
+import { CanvasConnectError, connectCanvas, disconnectCanvas, syncCanvas } from "@/server/sync/canvas-sync";
+import { ReviewError, clearAgentRunMark, markAgentRun } from "@/server/ai/review";
 
 export type FormState = { ok?: boolean; message?: string; messageId?: string };
 
@@ -60,6 +63,76 @@ export async function checkEmailRepliesAction(): Promise<FormState> {
   if (!result.ok) return { ok: false, message: `Reply check failed: ${result.error}` };
   if (result.threads === 0) return { ok: true, message: "No briefing emails from the last 7 days to check." };
   return { ok: true, message: `Checked ${result.threads} briefing thread(s): ${result.processed} new repl${result.processed === 1 ? "y" : "ies"} handled.` };
+}
+
+export async function savePreferencesAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    await savePreferences(user.id, {
+      timezone: String(formData.get("timezone") ?? "").trim(),
+      morningEnabled: formData.get("morningEnabled") === "on",
+      morningTime: String(formData.get("morningTime") ?? ""),
+      eveningEnabled: formData.get("eveningEnabled") === "on",
+      eveningTime: String(formData.get("eveningTime") ?? ""),
+      quietHoursStart: String(formData.get("quietHoursStart") ?? ""),
+      quietHoursEnd: String(formData.get("quietHoursEnd") ?? ""),
+    });
+    revalidatePath("/");
+    return { ok: true, message: "Saved." };
+  } catch (err) {
+    return { ok: false, message: err instanceof PreferencesError ? err.message : `Error: ${errorMessage(err)}` };
+  }
+}
+
+export async function connectCanvasAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    const result = await connectCanvas(user.id, String(formData.get("token") ?? ""));
+    revalidatePath("/");
+    return result.ok
+      ? { ok: true, message: `Connected. Imported ${result.upserted} assignment(s) from ${result.courses} course(s).` }
+      : { ok: false, message: `Token saved, but the first sync failed: ${result.error}` };
+  } catch (err) {
+    return { ok: false, message: err instanceof CanvasConnectError ? err.message : `Error: ${errorMessage(err)}` };
+  }
+}
+
+export async function syncCanvasAction() {
+  const user = await requireUser();
+  await syncCanvas(user.id);
+  revalidatePath("/");
+}
+
+export async function disconnectCanvasAction() {
+  const user = await requireUser();
+  await disconnectCanvas(user.id);
+  revalidatePath("/");
+}
+
+export async function markAgentRunAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    const field = (k: string) => String(formData.get(k) ?? "");
+    await markAgentRun(user.id, {
+      runId: field("runId"),
+      verdict: field("verdict"),
+      note: field("note"),
+      should: field("should"),
+      taskId: field("taskId"),
+      title: field("title"),
+      dateText: field("dateText"),
+    });
+    revalidatePath("/replies");
+    return { ok: true, message: "Saved." };
+  } catch (err) {
+    return { ok: false, message: err instanceof ReviewError ? err.message : `Error: ${errorMessage(err)}` };
+  }
+}
+
+export async function clearAgentRunMarkAction(formData: FormData) {
+  const user = await requireUser();
+  await clearAgentRunMark(user.id, String(formData.get("runId") ?? ""));
+  revalidatePath("/replies");
 }
 
 export async function setBriefingChannelAction(formData: FormData) {

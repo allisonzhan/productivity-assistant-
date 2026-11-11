@@ -30,15 +30,19 @@ model User {
   briefings          Briefing[]
   deliveryAttempts   DeliveryAttempt[]
   inboundMessages    InboundMessage[]
+  scheduledBriefings ScheduledBriefing[]
   phoneVerifications PhoneVerification[]
   preference         UserPreference?
   auditLogs          AuditLog[]
   jobExecutions      JobExecution[]
+  pendingActions     PendingAction[]
+  agentRuns          AgentRun[]
 }
 
 model UserPreference {
   userId            String  @id
   briefingChannel   String  @default("email") // email | sms
+  morningEnabled    Boolean @default(true)
   morningTime       String  @default("08:00")
   eveningEnabled    Boolean @default(false)
   eveningTime       String  @default("19:00")
@@ -153,15 +157,24 @@ model Task {
   status        String    @default("open") // open | done
   category      String?
   effortMinutes Int?
-  sourceType    String    @default("manual") // manual | sms | email (briefing reply) | canvas | gmail (ingestion)
+  sourceType    String    @default("manual") // manual | sms | email (briefing reply) | agent | canvas | gmail (ingestion)
   sourceRef     String? // e.g. InboundMessage id
   verification  String    @default("confirmed")
   completedAt   DateTime? @db.Timestamptz(3)
   deletedAt     DateTime? @db.Timestamptz(3)
   createdAt     DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+  // Imported items (Canvas). The provider owns title/dueAt/htmlLink/courseName/externalSubmittedAt;
+  // the user owns notes, priority and status, which a re-sync never overwrites.
+  externalProvider    String? // canvas
+  externalId          String? // e.g. "assignment:12345"
+  htmlLink            String?
+  courseName          String?
+  externalSubmittedAt DateTime? @db.Timestamptz(3)
+  notes               String?
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, externalProvider, externalId])
   @@index([userId, status, dueDate])
 }
 
@@ -214,14 +227,94 @@ model InboundMessage {
   fromAddress       String // E.164 phone number or email address
   threadId          String? // Gmail thread
   body              String
-  status            String   @default("received") // received | processed | ignored | rejected
+  // received | processed | ignored | rejected | agent_pending (claimed, waiting for the LLM agent)
+  status            String   @default("received")
   command           String?
   result            Json?
   receivedAt        DateTime @default(now()) @db.Timestamptz(3)
+  // Set when an agent run starts; a run older than 10 min without finishing may be retried.
+  agentStartedAt    DateTime? @db.Timestamptz(3)
   user              User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerMessageId]) // webhook idempotency
   @@index([userId, receivedAt])
+  @@index([status, agentStartedAt])
+}
+
+// Changes the agent proposed. Nothing is applied until the user replies YES in the same thread.
+model PendingAction {
+  id                  String    @id @default(cuid())
+  userId              String
+  inboundMessageId    String    @unique // the reply that led to the proposal
+  threadId            String?
+  actions             Json // validated, normalized actions (deterministic dates already resolved)
+  summary             String
+  status              String    @default("pending") // pending | confirmed | cancelled | expired | superseded
+  expiresAt           DateTime  @db.Timestamptz(3)
+  resolvedAt          DateTime? @db.Timestamptz(3)
+  resolvedByInboundId String?
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, threadId, status])
+}
+
+// One row per handled reply: what was asked, what the agent did, and the user's right/wrong mark.
+model AgentRun {
+  id               String    @id @default(cuid())
+  userId           String
+  inboundMessageId String    @unique
+  kind             String // agent | fast_path
+  input            String
+  context          Json? // what the agent was given besides tools (date, zone, briefing numbers)
+  zone             String
+  receivedAt       DateTime  @db.Timestamptz(3) // the "now" dates were resolved against
+  model            String?
+  toolCalls        Json? // [{ name, input, output, isError }]
+  proposedActions  Json?
+  pendingActionId  String?
+  reply            String?
+  error            String?
+  inputTokens      Int?
+  outputTokens     Int?
+  latencyMs        Int?
+  verdict          String? // right | wrong
+  note             String?
+  expected         Json? // the user's "should have" on a wrong run
+  markedAt         DateTime? @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([verdict])
+}
+
+// One row per user + kind + local date: the claim that makes scheduled sends exactly-once.
+model ScheduledBriefing {
+  id            String    @id @default(cuid())
+  userId        String
+  kind          String // morning | evening
+  forDate       DateTime  @db.Date // user-local date
+  scheduledFor  DateTime  @db.Timestamptz(3) // the local time it was due, as an instant
+  // pending -> sending -> sent | retrying (nextAttemptAt) | failed | skipped
+  status        String    @default("pending")
+  briefingId    String?   @unique
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime? @db.Timestamptz(3)
+  error         String?
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, forDate])
+  @@index([status, nextAttemptAt])
+}
+
+// Written by the worker on every scheduler tick so the dashboard can say whether it is running.
+model WorkerHeartbeat {
+  id         String   @id // "scheduler"
+  startedAt  DateTime @db.Timestamptz(3)
+  lastTickAt DateTime @db.Timestamptz(3)
 }
 
 model AuditLog {
@@ -241,7 +334,7 @@ model AuditLog {
 model JobExecution {
   id         String    @id @default(cuid())
   userId     String?
-  type       String // calendar_sync | briefing_send | email_reply_check
+  type       String // calendar_sync | briefing_send | email_reply_check | scheduled_briefing
   status     String    @default("running") // running | succeeded | failed
   attempt    Int       @default(1)
   error      String?

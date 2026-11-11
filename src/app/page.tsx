@@ -1,4 +1,5 @@
 import { DateTime } from "luxon";
+import Link from "next/link";
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import { getCurrentUser } from "@/server/auth/session";
@@ -8,9 +9,19 @@ import { buildSnapshot, loadBriefingInputs } from "@/server/briefings/generate";
 import { MAX_SEND_ATTEMPTS, getBriefingChannel } from "@/server/briefings/send";
 import { listOpenTasks } from "@/server/tasks/service";
 import { dateOnlyToISO } from "@/server/time";
-import { retryBriefingAction, setBriefingChannelAction, setTaskStatusAction, syncCalendarAction } from "@/app/actions";
+import {
+  disconnectCanvasAction,
+  retryBriefingAction,
+  setBriefingChannelAction,
+  setTaskStatusAction,
+  syncCalendarAction,
+  syncCanvasAction,
+} from "@/app/actions";
 import { Alert, Badge, Button, Card, statusTone } from "@/components/ui";
-import { CheckRepliesForm, PhoneForms, SendBriefingForm, SimulatorForm } from "@/components/forms";
+import { CanvasTokenForm, CheckRepliesForm, PhoneForms, SendBriefingForm, SettingsForm, SimulatorForm } from "@/components/forms";
+import { CANVAS } from "@/server/sync/canvas-sync";
+import { getSchedulePrefs } from "@/server/scheduling/preferences";
+import { HEARTBEAT_ID } from "@/server/scheduling/scheduler";
 
 export const dynamic = "force-dynamic";
 
@@ -35,7 +46,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
   }
 
   const zone = user.timezone;
-  const [integration, gmail, channel, inputs, openTasks, doneTasks, latestBriefing, deliveries, inbound] = await Promise.all([
+  const [integration, gmail, channel, inputs, openTasks, doneTasks, latestBriefing, deliveries, inbound, prefs, heartbeat, scheduled] = await Promise.all([
     prisma.integration.findUnique({
       where: { userId_provider: { userId: user.id, provider: GOOGLE_CALENDAR } },
       include: { credential: { select: { scope: true } } },
@@ -52,7 +63,20 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
     }),
     prisma.deliveryAttempt.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 10 }),
     prisma.inboundMessage.findMany({ where: { userId: user.id }, orderBy: { receivedAt: "desc" }, take: 5 }),
+    getSchedulePrefs(user.id),
+    prisma.workerHeartbeat.findUnique({ where: { id: HEARTBEAT_ID } }),
+    prisma.scheduledBriefing.findMany({ where: { userId: user.id }, orderBy: { scheduledFor: "desc" }, take: 4 }),
   ]);
+  const [canvas, canvasCount] = await Promise.all([
+    prisma.integration.findUnique({ where: { userId_provider: { userId: user.id, provider: CANVAS } }, include: { credential: { select: { scope: true } } } }),
+    prisma.task.count({ where: { userId: user.id, externalProvider: CANVAS, deletedAt: null, externalSubmittedAt: null, status: "open" } }),
+  ]);
+  // Ticks run every minute; three missed ticks means the worker is not running.
+  const workerRunning = !!heartbeat && Date.now() - heartbeat.lastTickAt.getTime() < 3 * 60_000;
+  const scheduleSummary = [
+    prefs.morningEnabled ? `morning ${DateTime.fromFormat(prefs.morningTime, "HH:mm").toFormat("h:mm a")}` : null,
+    prefs.eveningEnabled ? `evening ${DateTime.fromFormat(prefs.eveningTime, "HH:mm").toFormat("h:mm a")}` : null,
+  ].filter(Boolean);
   const simulator = channel === "sms" && env().SMS_PROVIDER === "simulator";
   const grantedScopes = integration?.credential?.scope.split(" ") ?? [];
   const gmailGranted = grantedScopes.includes(GMAIL_SEND_SCOPE) && grantedScopes.includes(GMAIL_READ_SCOPE);
@@ -73,9 +97,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
           <h1 className="text-xl font-semibold">Today · {DateTime.now().setZone(zone).toFormat("cccc, LLLL d")}</h1>
           <p className="text-sm text-muted">{user.email} · times shown in {zone}</p>
         </div>
-        <form action="/api/auth/logout" method="post">
-          <Button variant="secondary">Sign out</Button>
-        </form>
+        <div className="flex items-center gap-3">
+          <Link className="text-sm text-accent underline" href="/replies">Review replies</Link>
+          <form action="/api/auth/logout" method="post">
+            <Button variant="secondary">Sign out</Button>
+          </form>
+        </div>
       </header>
       {error && <Alert tone="error">{error}</Alert>}
       {simulator && (
@@ -117,6 +144,43 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
               )}
             </div>
           )}
+        </Card>
+
+        <Card
+          title="Canvas"
+          actions={
+            canvas?.credential && (
+              <form className="flex gap-2">
+                <Button variant="secondary" formAction={syncCanvasAction}>{canvas.lastError ? "Retry sync" : "Sync now"}</Button>
+                <Button variant="danger" formAction={disconnectCanvasAction}>Disconnect</Button>
+              </form>
+            )
+          }
+        >
+          <div className="space-y-2 text-sm">
+            {canvas?.credential ? (
+              <>
+                <p>
+                  <Badge tone={statusTone(canvas.status)}>{canvas.status}</Badge> {canvasCount} upcoming assignment(s) imported · Last
+                  success: {fmt(canvas.lastSuccessAt, zone)}
+                </p>
+                {canvas.lastError && (
+                  <Alert tone="error">
+                    Canvas sync failed at {fmt(canvas.lastErrorAt, zone)}: {canvas.lastError}
+                  </Alert>
+                )}
+                {canvas.status === "reauth_required" && <CanvasTokenForm replacing />}
+              </>
+            ) : (
+              <>
+                <p>
+                  Import assignment deadlines from Canvas. In Canvas open <strong>Account → Settings → New Access Token</strong>, then
+                  paste it here. It is stored encrypted and used read-only.
+                </p>
+                <CanvasTokenForm />
+              </>
+            )}
+          </div>
         </Card>
 
         {channel === "email" ? (
@@ -235,6 +299,39 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
               </ul>
             </details>
           )}
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card title="Automation">
+          <div className="space-y-2 text-sm">
+            {workerRunning ? (
+              <p>
+                <Badge tone="green">worker running</Badge> Last tick {fmt(heartbeat!.lastTickAt, zone, "h:mm:ss a")} · replies checked every 5 min ·
+                calendar synced every 15 min
+              </p>
+            ) : (
+              <Alert tone="error">
+                The worker is not running{heartbeat ? ` (last seen ${fmt(heartbeat.lastTickAt, zone)})` : ""}, so nothing is sent or
+                checked automatically. Start it with <code>npm.cmd run worker</code>.
+              </Alert>
+            )}
+            <p>Scheduled briefings: {scheduleSummary.length ? scheduleSummary.join(", ") : "off"} ({channel})</p>
+            {scheduled.length > 0 && (
+              <ul className="space-y-1">
+                {scheduled.map((s) => (
+                  <li key={s.id}>
+                    <Badge tone={statusTone(s.status)}>{s.status}</Badge> {s.kind} · {DateTime.fromISO(dateOnlyToISO(s.forDate)).toFormat("ccc LLL d")}
+                    {s.status === "retrying" && s.nextAttemptAt && <span className="text-muted"> · next try {fmt(s.nextAttemptAt, zone, "h:mm a")}</span>}
+                    {s.error && <span className="text-red-600 dark:text-red-400"> · {s.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </Card>
+        <Card title="Schedule settings">
+          <SettingsForm initial={{ timezone: zone, ...prefs }} />
         </Card>
       </div>
 

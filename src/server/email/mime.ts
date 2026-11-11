@@ -13,9 +13,15 @@ export type OutgoingEmail = {
   to: string;
   subject: string;
   body: string;
+  /** Optional HTML alternative; the plain-text `body` is always sent too. */
+  html?: string;
   kind: string; // value of the generated header, e.g. "briefing" | "reply"
   inReplyTo?: string;
 };
+
+function base64Body(text: string): string {
+  return Buffer.from(text.replace(/\r?\n/g, "\r\n"), "utf8").toString("base64").replace(/.{76}/g, "$&\r\n");
+}
 
 function oneLine(value: string): string {
   return value.replace(/[\r\n]+/g, " ").trim();
@@ -32,13 +38,18 @@ export function buildMime(msg: OutgoingEmail): string {
     `To: ${oneLine(msg.to)}`,
     `Subject: ${encodeWord(msg.subject)}`,
     "MIME-Version: 1.0",
-    'Content-Type: text/plain; charset="UTF-8"',
-    "Content-Transfer-Encoding: base64",
     `${GENERATED_HEADER}: ${oneLine(msg.kind)}`,
   ];
   if (msg.inReplyTo) headers.push(`In-Reply-To: ${oneLine(msg.inReplyTo)}`, `References: ${oneLine(msg.inReplyTo)}`);
-  const body = Buffer.from(msg.body.replace(/\r?\n/g, "\r\n"), "utf8").toString("base64").replace(/.{76}/g, "$&\r\n");
-  return `${headers.join("\r\n")}\r\n\r\n${body}`;
+  if (msg.html === undefined) {
+    headers.push('Content-Type: text/plain; charset="UTF-8"', "Content-Transfer-Encoding: base64");
+    return `${headers.join("\r\n")}\r\n\r\n${base64Body(msg.body)}`;
+  }
+  const boundary = `pa_${Buffer.from(msg.subject + msg.body.length).toString("hex").slice(0, 16)}_${Date.now().toString(36)}`;
+  headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+  const part = (type: string, text: string) =>
+    `--${boundary}\r\nContent-Type: ${type}; charset="UTF-8"\r\nContent-Transfer-Encoding: base64\r\n\r\n${base64Body(text)}\r\n`;
+  return `${headers.join("\r\n")}\r\n\r\n${part("text/plain", msg.body)}${part("text/html", msg.html)}--${boundary}--\r\n`;
 }
 
 export function replySubject(subject: string): string {
@@ -97,6 +108,22 @@ const QUOTE_START = [
   /^--\s?$/, // signature delimiter
   /^Sent from my /i,
 ];
+
+/**
+ * Everything the user wrote above the quoted history (trimmed, capped). The command parser
+ * still reads only its first line; the agent gets all of it.
+ */
+export function extractReplyText(text: string, maxChars = 1000): string {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim());
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (QUOTE_START.some((re) => re.test(line))) break;
+    if (/^On\s/.test(line) && (/wrote:$/.test(line) || /wrote:$/.test(lines[i + 1] ?? ""))) break;
+    kept.push(line);
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, maxChars);
+}
 
 /**
  * The command in a reply: the first non-empty line written above the quoted history.
