@@ -11,13 +11,36 @@ import { checkAllEmailReplies, recordWorkerStart, schedulerTick, syncAllCalendar
  */
 
 const JOBS: { queue: string; cron: string; run: () => Promise<unknown> }[] = [
-  { queue: "scheduler-tick", cron: "* * * * *", run: () => schedulerTick() },
+  {
+    queue: "scheduler-tick",
+    cron: "* * * * *",
+    run: async () => {
+      const result = await schedulerTick();
+      await warnIfGoogleNeedsReconnect();
+      return result;
+    },
+  },
   { queue: "email-reply-check", cron: "*/5 * * * *", run: () => checkAllEmailReplies() },
   { queue: "calendar-sync", cron: "*/15 * * * *", run: () => syncAllCalendars() },
 ];
 
 function log(message: string, detail?: unknown) {
   console.log(`[worker ${new Date().toISOString()}] ${message}`, detail === undefined ? "" : JSON.stringify(detail));
+}
+
+const REAUTH_WARN_EVERY_MS = 60 * 60_000;
+let lastReauthWarning = 0;
+
+/** An expired Google login stops every briefing; say so loudly (hourly) instead of failing quietly. */
+async function warnIfGoogleNeedsReconnect() {
+  if (Date.now() - lastReauthWarning < REAUTH_WARN_EVERY_MS) return;
+  const expired = await prisma.integration.count({ where: { provider: { in: ["google_calendar", "gmail"] }, status: "reauth_required" } });
+  if (!expired) return;
+  lastReauthWarning = Date.now();
+  console.warn(
+    `\n[worker] !!! GOOGLE ACCESS EXPIRED for ${expired} integration(s): briefings cannot be sent. ` +
+      `Open ${env().APP_URL ?? "the app"} and click "Reconnect Google". !!!\n`,
+  );
 }
 
 async function main() {

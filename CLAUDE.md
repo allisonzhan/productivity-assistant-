@@ -12,7 +12,10 @@ reply ("Add task: finish reading Friday", TODAY, DONE, STOP…). Priority order:
 **automation > reliability > simplicity**. Personal use first, then other students.
 
 ## Current milestone
-**Gate 2 — runs by itself; core calendar/task product** (branch `gate2-core`, phases A–D in
+**gate-ai-upgrade — a briefing + reply loop used every day** (branch `gate-ai-upgrade`, steps 1–4 in
+DEVELOPMENT_PLAN.md: better briefing, Canvas deadlines, Claude agent replies with YES confirmations,
+reply-quality eval). Every feature must improve the briefing or the reply loop; re-verify the live loop
+after each step. Gate 2 Phase A (worker) is done; phases B–D are superseded. Previous: Gate 2 (branch `gate2-core`, phases A–D in
 DEVELOPMENT_PLAN.md). Gate 1 (below) passed on 2026-10-27.
 
 **Gate 1 — mandatory end-to-end vertical slice** (see DEVELOPMENT_PLAN.md):

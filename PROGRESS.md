@@ -3,7 +3,28 @@
 Legend: ✅ done & verified · 🟡 implemented and tested with fakes, awaiting live verification · 🧪 simulated only · ⛔ blocked · ⬜ not started
 
 ## Current work
-Gate 1 delivery switched from SMS to **email via the user's own Gmail** (2026-10-26, user decision: no paid services); SMS/Twilio is paused but kept. **Gate 1 live acceptance passed on 2026-10-27** with a real Google account: Calendar → dashboard → briefing → Gmail → real reply → task → dashboard. Gate 2 in progress on `gate2-core`.
+**gate-ai-upgrade** (branch `gate-ai-upgrade`, from `gate2-core`, started 2026-11-10): make the briefing + reply loop something used every day. Steps: 1 better briefing · 2 Canvas deadlines · 3 natural-language replies (Claude agent with confirmations) · 4 quality log + `npm run eval`. Gate 2 phases B–D are superseded (see DEVELOPMENT_PLAN.md).
+
+Earlier: Gate 1 delivery switched from SMS to **email via the user's own Gmail** (2026-10-26); **Gate 1 live acceptance passed on 2026-10-27**.
+
+## User answers (2026-11-10), kept for future reference
+| Question | Answer |
+|---|---|
+| What goes in the briefing | All of: today's schedule + due/overdue; week-ahead deadlines listed by day; free time + suggested focus; richer (HTML) formatting |
+| When | Morning only, 08:00 America/New_York |
+| What I'll reply with | Questions ("what's due this week"), add tasks, mark done, reschedule/edit |
+| Pain points | "MVP for now, note all down": (a) worker runs only while the laptop is on, so free hosting is needed later; (b) Google Testing mode expires refresh tokens every 7 days. **This caused a real outage**, fixed now by switching the consent screen to *In production*; (c) replies are picked up only every 5 min; (d) Canvas deadlines missing → step 2 |
+
+## gate-ai-upgrade checklist
+| Step | Status | Evidence / what's missing |
+|---|---|---|
+| 1. Briefing: free time, suggested focus, week-ahead by day, HTML email | 🟡 | Code + tests (`briefing-email.test.ts`, email-channel test checks the multipart send). Lint/typecheck/build/tests 62/62 green 2026-11-10. Live check blocked on reconnecting Google (see outage below). |
+| 2. Canvas (VT) deadlines | ⬜ | |
+| 3. Claude agent replies + YES confirmations | ⬜ | |
+| 4. Reply quality log + `npm run eval` | ⬜ | |
+
+### Outage 2026-11-02 → 2026-11-10 (found during step 1)
+Google refresh token expired on 2026-11-02 (Testing-mode 7-day limit). `google_calendar` went `reauth_required`; the morning briefings of Nov 4 and Nov 8 are `failed` with "Google access was revoked or expired". The worker kept ticking and the dashboard showed Reconnect, but nothing reached the inbox, so the failure was effectively silent. Fix: consent screen → *In production* (user decision 2026-11-10), reconnect once; the worker now prints a loud hourly console warning while any Google integration needs reconnecting.
 
 ## Gate 2 checklist
 | Phase | Status | Evidence / what's missing |

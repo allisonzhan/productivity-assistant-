@@ -2,7 +2,19 @@
 
 Derived from PRD v1.1 and the Claude Code Implementation Prompt. Conventions: [CLAUDE.md](CLAUDE.md). Status: [PROGRESS.md](PROGRESS.md).
 
-## Current milestone: Gate 2 — runs by itself; core calendar/task product
+## Current milestone: gate-ai-upgrade — a loop I rely on daily (branch `gate-ai-upgrade`)
+Every feature must make the morning briefing or the reply loop more useful; the live loop (scheduled briefing → "Add task:" reply → task) is re-verified after each step.
+
+| Step | Scope |
+|---|---|
+| 1 | Briefing: free time (deterministic, `scheduling/availability.ts`), suggested focus, week-ahead deadlines by day, numbered tasks, HTML + text email. Morning only. |
+| 2 | Canvas (Virginia Tech) assignments via a personal access token stored encrypted; idempotent on Canvas IDs; Canvas authoritative for title/due/submission, user notes/priority/done kept. |
+| 3 | Natural-language replies: Claude agent (`src/server/ai`) with read tools answering immediately and write tools producing a `PendingAction` that runs only after the user replies YES. Dates via the deterministic resolver. "Add task:" stays the fast path/fallback. Exactly-once preserved; every tool call audited. |
+| 4 | `AgentRun` log, right/wrong marking on `/replies`, `npm run eval` replay with deterministic grading. |
+
+Not built: SMS (paused), Outlook, Discord, Gmail triage, calendar month/week views, recurring-event handling, evening/weekly briefings. Gate 2 phases B–D below are superseded: B's commands and task edits come through the agent; C and D are dropped or deferred.
+
+## Previous milestone: Gate 2 — runs by itself; core calendar/task product (Phase A done)
 
 ## Phases
 
