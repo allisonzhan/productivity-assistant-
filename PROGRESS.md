@@ -19,7 +19,7 @@ Earlier: Gate 1 delivery switched from SMS to **email via the user's own Gmail**
 | Step | Status | Evidence / what's missing |
 |---|---|---|
 | 1. Briefing: free time, suggested focus, week-ahead by day, HTML email | 🟡 | Code + tests (`briefing-email.test.ts`, email-channel test checks the multipart send). Lint/typecheck/build/tests 62/62 green 2026-11-10. Live check blocked on reconnecting Google (see outage below). |
-| 2. Canvas (VT) deadlines | ⬜ | |
+| 2. Canvas (VT) deadlines | 🟡 | Token form on the dashboard (validated via `users/self`, stored AES-256-GCM); hourly `canvas-sync` + refresh before each scheduled briefing; upsert on `(userId, "canvas", "assignment:<id>")`; Canvas owns title/due/link/course/submission, user keeps notes/priority/done; submitted hidden; missing → soft-deleted; 401 → `reauth_required`. `canvas-sync.test.ts` 5/5 (fake Canvas). 67/67 tests, lint, build green. Live: needs your VT token. |
 | 3. Claude agent replies + YES confirmations | ⬜ | |
 | 4. Reply quality log + `npm run eval` | ⬜ | |
 

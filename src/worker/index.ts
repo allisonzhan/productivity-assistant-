@@ -3,6 +3,7 @@ import { env } from "@/server/env";
 import { prisma } from "@/server/db";
 import { errorMessage } from "@/server/jobs/run";
 import { checkAllEmailReplies, recordWorkerStart, schedulerTick, syncAllCalendars } from "@/server/scheduling/scheduler";
+import { syncAllCanvas } from "@/server/sync/canvas-sync";
 
 /**
  * Background worker (`npm run worker`). pg-boss provides durable cron schedules in Postgres
@@ -22,6 +23,7 @@ const JOBS: { queue: string; cron: string; run: () => Promise<unknown> }[] = [
   },
   { queue: "email-reply-check", cron: "*/5 * * * *", run: () => checkAllEmailReplies() },
   { queue: "calendar-sync", cron: "*/15 * * * *", run: () => syncAllCalendars() },
+  { queue: "canvas-sync", cron: "7 * * * *", run: () => syncAllCanvas() },
 ];
 
 function log(message: string, detail?: unknown) {

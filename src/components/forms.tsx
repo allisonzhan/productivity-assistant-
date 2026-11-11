@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import {
+  connectCanvasAction,
   checkEmailRepliesAction,
   confirmPhoneAction,
   savePreferencesAction,
@@ -38,6 +39,28 @@ export function PhoneForms() {
         <Button variant="secondary" disabled={confirming}>Verify</Button>
       </form>
       <Message state={confirmState} />
+    </div>
+  );
+}
+
+export function CanvasTokenForm({ replacing }: { replacing?: boolean }) {
+  const [state, action, pending] = useActionState(connectCanvasAction, {});
+  return (
+    <div>
+      <form action={action} className="flex flex-wrap gap-2">
+        <label className="sr-only" htmlFor="canvas-token">Canvas access token</label>
+        <input
+          id="canvas-token"
+          name="token"
+          type="password"
+          autoComplete="off"
+          placeholder={replacing ? "Paste a new access token" : "Paste your Canvas access token"}
+          required
+          className={inputClass}
+        />
+        <Button disabled={pending}>{pending ? "Checking…" : replacing ? "Replace token" : "Connect Canvas"}</Button>
+      </form>
+      <Message state={state} />
     </div>
   );
 }

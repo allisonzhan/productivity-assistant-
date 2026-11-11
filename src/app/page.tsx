@@ -8,9 +8,17 @@ import { buildSnapshot, loadBriefingInputs } from "@/server/briefings/generate";
 import { MAX_SEND_ATTEMPTS, getBriefingChannel } from "@/server/briefings/send";
 import { listOpenTasks } from "@/server/tasks/service";
 import { dateOnlyToISO } from "@/server/time";
-import { retryBriefingAction, setBriefingChannelAction, setTaskStatusAction, syncCalendarAction } from "@/app/actions";
+import {
+  disconnectCanvasAction,
+  retryBriefingAction,
+  setBriefingChannelAction,
+  setTaskStatusAction,
+  syncCalendarAction,
+  syncCanvasAction,
+} from "@/app/actions";
 import { Alert, Badge, Button, Card, statusTone } from "@/components/ui";
-import { CheckRepliesForm, PhoneForms, SendBriefingForm, SettingsForm, SimulatorForm } from "@/components/forms";
+import { CanvasTokenForm, CheckRepliesForm, PhoneForms, SendBriefingForm, SettingsForm, SimulatorForm } from "@/components/forms";
+import { CANVAS } from "@/server/sync/canvas-sync";
 import { getSchedulePrefs } from "@/server/scheduling/preferences";
 import { HEARTBEAT_ID } from "@/server/scheduling/scheduler";
 
@@ -57,6 +65,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
     getSchedulePrefs(user.id),
     prisma.workerHeartbeat.findUnique({ where: { id: HEARTBEAT_ID } }),
     prisma.scheduledBriefing.findMany({ where: { userId: user.id }, orderBy: { scheduledFor: "desc" }, take: 4 }),
+  ]);
+  const [canvas, canvasCount] = await Promise.all([
+    prisma.integration.findUnique({ where: { userId_provider: { userId: user.id, provider: CANVAS } }, include: { credential: { select: { scope: true } } } }),
+    prisma.task.count({ where: { userId: user.id, externalProvider: CANVAS, deletedAt: null, externalSubmittedAt: null, status: "open" } }),
   ]);
   // Ticks run every minute; three missed ticks means the worker is not running.
   const workerRunning = !!heartbeat && Date.now() - heartbeat.lastTickAt.getTime() < 3 * 60_000;
@@ -128,6 +140,43 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
               )}
             </div>
           )}
+        </Card>
+
+        <Card
+          title="Canvas"
+          actions={
+            canvas?.credential && (
+              <form className="flex gap-2">
+                <Button variant="secondary" formAction={syncCanvasAction}>{canvas.lastError ? "Retry sync" : "Sync now"}</Button>
+                <Button variant="danger" formAction={disconnectCanvasAction}>Disconnect</Button>
+              </form>
+            )
+          }
+        >
+          <div className="space-y-2 text-sm">
+            {canvas?.credential ? (
+              <>
+                <p>
+                  <Badge tone={statusTone(canvas.status)}>{canvas.status}</Badge> {canvasCount} upcoming assignment(s) imported · Last
+                  success: {fmt(canvas.lastSuccessAt, zone)}
+                </p>
+                {canvas.lastError && (
+                  <Alert tone="error">
+                    Canvas sync failed at {fmt(canvas.lastErrorAt, zone)}: {canvas.lastError}
+                  </Alert>
+                )}
+                {canvas.status === "reauth_required" && <CanvasTokenForm replacing />}
+              </>
+            ) : (
+              <>
+                <p>
+                  Import assignment deadlines from Canvas. In Canvas open <strong>Account → Settings → New Access Token</strong>, then
+                  paste it here. It is stored encrypted and used read-only.
+                </p>
+                <CanvasTokenForm />
+              </>
+            )}
+          </div>
         </Card>
 
         {channel === "email" ? (

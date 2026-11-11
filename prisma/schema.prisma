@@ -155,15 +155,24 @@ model Task {
   status        String    @default("open") // open | done
   category      String?
   effortMinutes Int?
-  sourceType    String    @default("manual") // manual | sms | email (briefing reply) | canvas | gmail (ingestion)
+  sourceType    String    @default("manual") // manual | sms | email (briefing reply) | agent | canvas | gmail (ingestion)
   sourceRef     String? // e.g. InboundMessage id
   verification  String    @default("confirmed")
   completedAt   DateTime? @db.Timestamptz(3)
   deletedAt     DateTime? @db.Timestamptz(3)
   createdAt     DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+  // Imported items (Canvas). The provider owns title/dueAt/htmlLink/courseName/externalSubmittedAt;
+  // the user owns notes, priority and status, which a re-sync never overwrites.
+  externalProvider    String? // canvas
+  externalId          String? // e.g. "assignment:12345"
+  htmlLink            String?
+  courseName          String?
+  externalSubmittedAt DateTime? @db.Timestamptz(3)
+  notes               String?
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, externalProvider, externalId])
   @@index([userId, status, dueDate])
 }
 

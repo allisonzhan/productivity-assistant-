@@ -35,7 +35,8 @@ function taskLine(t: BriefingItem, opts: { showDate?: boolean } = {}): string {
   const num = t.n ? `${t.n}. ` : "";
   const when = [opts.showDate && t.date ? shortDate(t.date) : null, t.time].filter(Boolean).join(" ");
   const flag = t.priority === "high" || t.priority === "critical" ? " (!)" : "";
-  return `${num}${t.title}${when ? ` — ${when}` : ""}${flag}`;
+  const course = t.course ? ` [${t.course}]` : "";
+  return `${num}${t.title}${course}${when ? ` — ${when}` : ""}${flag}`;
 }
 
 type Section = { title: string; lines: string[]; muted?: string };

@@ -5,6 +5,7 @@ import { generateBriefing } from "@/server/briefings/generate";
 import { BriefingSendError, MAX_SEND_ATTEMPTS, getBriefingChannel, sendBriefing } from "@/server/briefings/send";
 import { checkEmailReplies } from "@/server/email/replies";
 import { syncGoogleCalendar } from "@/server/sync/google-calendar-sync";
+import { CANVAS, syncCanvas } from "@/server/sync/canvas-sync";
 import { GOOGLE_CALENDAR } from "@/server/integrations/google-credentials";
 import { dueBriefings, type ScheduleKind } from "@/server/scheduling/due";
 import { toSchedulePrefs } from "@/server/scheduling/preferences";
@@ -124,10 +125,13 @@ export async function runScheduledBriefing(id: string, now: Date = new Date(), o
 
 /** Briefings come from stored data; refresh it first if the last sync is old. Failures are recorded, not fatal. */
 async function syncIfStale(userId: string, now: Date, opts: Opts) {
-  const integration = await prisma.integration.findUnique({ where: { userId_provider: { userId, provider: GOOGLE_CALENDAR } } });
-  if (!integration || integration.status === "reauth_required") return;
-  if (integration.lastSyncAt && now.getTime() - integration.lastSyncAt.getTime() < FRESH_SYNC_MS) return;
-  await syncGoogleCalendar(userId, { now, fetchImpl: opts.fetchImpl });
+  const integrations = await prisma.integration.findMany({ where: { userId, provider: { in: [GOOGLE_CALENDAR, CANVAS] } } });
+  for (const integration of integrations) {
+    if (["reauth_required", "disconnected"].includes(integration.status)) continue;
+    if (integration.lastSyncAt && now.getTime() - integration.lastSyncAt.getTime() < FRESH_SYNC_MS) continue;
+    if (integration.provider === GOOGLE_CALENDAR) await syncGoogleCalendar(userId, { now, fetchImpl: opts.fetchImpl });
+    else await syncCanvas(userId, { now, fetchImpl: opts.fetchImpl });
+  }
 }
 
 /** Periodic reply check for everyone on the email channel. */

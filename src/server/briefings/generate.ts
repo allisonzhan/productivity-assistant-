@@ -13,6 +13,8 @@ export type BriefingItem = {
   /** Tasks only: stable number for this briefing, so a reply can say "done with 2". */
   n?: number;
   priority?: string;
+  /** Imported assignments: the course they belong to. */
+  course?: string;
 };
 
 /** A suggested (not confirmed) pairing of an open task with a free block today. */
@@ -75,7 +77,8 @@ export async function loadBriefingInputs(userId: string, zone: string, now: Date
       },
       orderBy: [{ startAt: "asc" }, { startDate: "asc" }],
     }),
-    prisma.task.findMany({ where: { userId, status: "open", deletedAt: null }, orderBy: { createdAt: "asc" } }),
+    // Assignments already submitted in Canvas are hidden; the user's own status is untouched.
+    prisma.task.findMany({ where: { userId, status: "open", deletedAt: null, externalSubmittedAt: null }, orderBy: { createdAt: "asc" } }),
   ]);
   return { events, tasks, today };
 }
@@ -111,6 +114,7 @@ export function buildSnapshot(events: Event[], tasks: Task[], zone: string, toda
     const due = t.dueDate ? dateOnlyToISO(t.dueDate) : t.dueAt ? DateTime.fromJSDate(t.dueAt, { zone }).toISODate()! : null;
     const time = t.dueAt ? DateTime.fromJSDate(t.dueAt, { zone }).toFormat("h:mma").toLowerCase() : null;
     const item: BriefingItem = { id: t.id, kind: "task", title: t.title, date: due ?? "", time, priority: t.priority };
+    if (t.courseName) item.course = t.courseName;
     if (!due) undated.push(item);
     else if (due < today) overdue.push(item);
     else byDate.get(due)?.tasksDue.push(item);

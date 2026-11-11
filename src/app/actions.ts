@@ -13,6 +13,7 @@ import { checkEmailReplies } from "@/server/email/replies";
 import { setTaskStatus } from "@/server/tasks/service";
 import { errorMessage } from "@/server/jobs/run";
 import { PreferencesError, savePreferences } from "@/server/scheduling/preferences";
+import { CanvasConnectError, connectCanvas, disconnectCanvas, syncCanvas } from "@/server/sync/canvas-sync";
 
 export type FormState = { ok?: boolean; message?: string; messageId?: string };
 
@@ -80,6 +81,31 @@ export async function savePreferencesAction(_prev: FormState, formData: FormData
   } catch (err) {
     return { ok: false, message: err instanceof PreferencesError ? err.message : `Error: ${errorMessage(err)}` };
   }
+}
+
+export async function connectCanvasAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    const result = await connectCanvas(user.id, String(formData.get("token") ?? ""));
+    revalidatePath("/");
+    return result.ok
+      ? { ok: true, message: `Connected. Imported ${result.upserted} assignment(s) from ${result.courses} course(s).` }
+      : { ok: false, message: `Token saved, but the first sync failed: ${result.error}` };
+  } catch (err) {
+    return { ok: false, message: err instanceof CanvasConnectError ? err.message : `Error: ${errorMessage(err)}` };
+  }
+}
+
+export async function syncCanvasAction() {
+  const user = await requireUser();
+  await syncCanvas(user.id);
+  revalidatePath("/");
+}
+
+export async function disconnectCanvasAction() {
+  const user = await requireUser();
+  await disconnectCanvas(user.id);
+  revalidatePath("/");
 }
 
 export async function setBriefingChannelAction(formData: FormData) {
