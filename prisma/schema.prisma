@@ -35,6 +35,8 @@ model User {
   preference         UserPreference?
   auditLogs          AuditLog[]
   jobExecutions      JobExecution[]
+  pendingActions     PendingAction[]
+  agentRuns          AgentRun[]
 }
 
 model UserPreference {
@@ -225,14 +227,66 @@ model InboundMessage {
   fromAddress       String // E.164 phone number or email address
   threadId          String? // Gmail thread
   body              String
-  status            String   @default("received") // received | processed | ignored | rejected
+  // received | processed | ignored | rejected | agent_pending (claimed, waiting for the LLM agent)
+  status            String   @default("received")
   command           String?
   result            Json?
   receivedAt        DateTime @default(now()) @db.Timestamptz(3)
+  // Set when an agent run starts; a run older than 10 min without finishing may be retried.
+  agentStartedAt    DateTime? @db.Timestamptz(3)
   user              User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerMessageId]) // webhook idempotency
   @@index([userId, receivedAt])
+  @@index([status, agentStartedAt])
+}
+
+// Changes the agent proposed. Nothing is applied until the user replies YES in the same thread.
+model PendingAction {
+  id                  String    @id @default(cuid())
+  userId              String
+  inboundMessageId    String    @unique // the reply that led to the proposal
+  threadId            String?
+  actions             Json // validated, normalized actions (deterministic dates already resolved)
+  summary             String
+  status              String    @default("pending") // pending | confirmed | cancelled | expired | superseded
+  expiresAt           DateTime  @db.Timestamptz(3)
+  resolvedAt          DateTime? @db.Timestamptz(3)
+  resolvedByInboundId String?
+  createdAt           DateTime  @default(now()) @db.Timestamptz(3)
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, threadId, status])
+}
+
+// One row per handled reply: what was asked, what the agent did, and the user's right/wrong mark.
+model AgentRun {
+  id               String    @id @default(cuid())
+  userId           String
+  inboundMessageId String    @unique
+  kind             String // agent | fast_path
+  input            String
+  context          Json? // what the agent was given besides tools (date, zone, briefing numbers)
+  zone             String
+  receivedAt       DateTime  @db.Timestamptz(3) // the "now" dates were resolved against
+  model            String?
+  toolCalls        Json? // [{ name, input, output, isError }]
+  proposedActions  Json?
+  pendingActionId  String?
+  reply            String?
+  error            String?
+  inputTokens      Int?
+  outputTokens     Int?
+  latencyMs        Int?
+  verdict          String? // right | wrong
+  note             String?
+  expected         Json? // the user's "should have" on a wrong run
+  markedAt         DateTime? @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([verdict])
 }
 
 // One row per user + kind + local date: the claim that makes scheduled sends exactly-once.

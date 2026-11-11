@@ -17,6 +17,7 @@
     "worker": "tsx --env-file-if-exists=.env --conditions=react-server src/worker/index.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@prisma/client": "^6.19.3",
     "luxon": "^3.7.2",
     "next": "^15.5.28",

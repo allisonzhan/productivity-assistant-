@@ -9,14 +9,19 @@ export type SmsCommand =
   | { type: "today" }
   | { type: "tasks" }
   | { type: "help" }
-  | { type: "stop" }
+  | { type: "stop"; keyword: string }
   | { type: "start" }
+  | { type: "confirm" }
+  | { type: "cancel" }
   | { type: "unsupported"; keyword: string }
   | { type: "clarify"; message: string }
   | { type: "unknown" };
 
 const STOP_WORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
-const START_WORDS = new Set(["START", "UNSTOP", "YES"]);
+// "YES" confirms a proposed change (it used to mean START); opting back in needs START.
+const START_WORDS = new Set(["START", "UNSTOP"]);
+const CONFIRM_WORDS = new Set(["YES", "Y", "CONFIRM", "YEP", "YEAH", "YES PLEASE", "OK", "OKAY"]);
+const CANCEL_WORDS = new Set(["NO", "N", "NOPE", "NO THANKS", "DON'T", "DONT"]);
 const HELP_WORDS = new Set(["HELP", "INFO", "COMMANDS"]);
 const LATER_WORDS = new Set(["WEEK", "MONTH", "DONE"]); // Gate 2
 
@@ -39,8 +44,10 @@ const NUMERIC_RE = new RegExp(String.raw`${CONNECTOR}\s+(\d{1,2})/(\d{1,2})(?:/(
 export function parseSmsCommand(rawBody: string, ctx: { zone: string; now?: Date }): SmsCommand {
   const body = rawBody.trim().replace(/\s+/g, " ");
   const keyword = body.toUpperCase().replace(/[.!]+$/, "");
-  if (STOP_WORDS.has(keyword)) return { type: "stop" };
+  if (STOP_WORDS.has(keyword)) return { type: "stop", keyword };
   if (START_WORDS.has(keyword)) return { type: "start" };
+  if (CONFIRM_WORDS.has(keyword)) return { type: "confirm" };
+  if (CANCEL_WORDS.has(keyword)) return { type: "cancel" };
   if (HELP_WORDS.has(keyword)) return { type: "help" };
   if (keyword === "TODAY") return { type: "today" };
   if (keyword === "TASKS") return { type: "tasks" };

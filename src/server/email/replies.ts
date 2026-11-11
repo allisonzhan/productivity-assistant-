@@ -4,8 +4,10 @@ import { GMAIL_READ_SCOPE } from "@/server/auth/google-oauth";
 import { GMAIL, ReauthRequiredError, getGmailAccessToken, hasGoogleScope } from "@/server/integrations/google-credentials";
 import { GoogleApiError } from "@/server/calendar/google-client";
 import { getGmailThread, header } from "@/server/email/gmail-client";
-import { GENERATED_HEADER, extractReplyCommand, parseAddress, payloadText } from "@/server/email/mime";
+import { GENERATED_HEADER, extractReplyText, parseAddress, payloadText } from "@/server/email/mime";
 import { handleInboundMessage } from "@/server/sms/inbound";
+import { retryStuckAgentReplies } from "@/server/ai/handle-reply";
+import type { CreateMessage } from "@/server/ai/agent";
 
 const LOOKBACK_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -21,7 +23,7 @@ export type ReplyCheckResult =
  * Also marks the app's own sends "delivered" once Gmail shows them in the inbox.
  * Runs on demand in Gate 1; a scheduled worker polls in Gate 2.
  */
-export async function checkEmailReplies(userId: string, opts: { fetchImpl?: typeof fetch; now?: Date } = {}): Promise<ReplyCheckResult> {
+export async function checkEmailReplies(userId: string, opts: { fetchImpl?: typeof fetch; now?: Date; agent?: { create?: CreateMessage; enabled?: boolean } } = {}): Promise<ReplyCheckResult> {
   const now = opts.now ?? new Date();
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   const integration = await prisma.integration.upsert({
@@ -80,16 +82,19 @@ export async function checkEmailReplies(userId: string, opts: { fetchImpl?: type
               provider: "gmail",
               providerMessageId: message.id,
               from,
-              body: extractReplyCommand(payloadText(message.payload)),
+              body: extractReplyText(payloadText(message.payload)),
               userId,
               thread: { threadId, subject: header(message, "Subject") ?? "Your briefing", messageIdHeader: header(message, "Message-ID") },
             },
             // Dates like "Friday" resolve relative to when the reply was written.
-            { now: message.internalDate ? new Date(Number(message.internalDate)) : now, fetchImpl: opts.fetchImpl },
+            { now: message.internalDate ? new Date(Number(message.internalDate)) : now, fetchImpl: opts.fetchImpl, create: opts.agent?.create, agentEnabled: opts.agent?.enabled },
           );
           processed++;
         }
       }
+
+      // Agent replies whose run died mid-way (worker restart) get another try.
+      if (threadIds.length) processed += await retryStuckAgentReplies(userId, { fetchImpl: opts.fetchImpl, create: opts.agent?.create });
 
       await prisma.integration.update({
         where: { id: integration.id },

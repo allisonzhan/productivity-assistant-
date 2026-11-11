@@ -110,6 +110,22 @@ const QUOTE_START = [
 ];
 
 /**
+ * Everything the user wrote above the quoted history (trimmed, capped). The command parser
+ * still reads only its first line; the agent gets all of it.
+ */
+export function extractReplyText(text: string, maxChars = 1000): string {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim());
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (QUOTE_START.some((re) => re.test(line))) break;
+    if (/^On\s/.test(line) && (/wrote:$/.test(line) || /wrote:$/.test(lines[i + 1] ?? ""))) break;
+    kept.push(line);
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, maxChars);
+}
+
+/**
  * The command in a reply: the first non-empty line written above the quoted history.
  * Taking one line keeps signatures and quoted briefings out of task titles.
  */

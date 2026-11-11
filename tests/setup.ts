@@ -17,3 +17,7 @@ process.env.SMS_PROVIDER = "simulator";
 process.env.TWILIO_ACCOUNT_SID = "ACtest";
 process.env.TWILIO_AUTH_TOKEN = "test-auth-token";
 process.env.TWILIO_FROM_NUMBER = "+15555550100";
+// Never call the real Anthropic API from tests: agent tests inject a fake model explicitly.
+process.env.ANTHROPIC_API_KEY = "";
+process.env.AGENT_ENABLED = "false";
+process.env.CANVAS_BASE_URL = "https://canvas.example.test";

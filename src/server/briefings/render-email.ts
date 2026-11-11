@@ -7,10 +7,14 @@ import { formatSlot } from "@/server/scheduling/availability";
  * an HTML part. Every title comes from calendars/tasks and is escaped: it is untrusted text.
  */
 
-export const REPLY_HINTS = [
-  "Add task: finish reading Friday",
-  "TODAY · TASKS · HELP · STOP",
-];
+const COMMAND_HINTS = ["Add task: finish reading Friday", "TODAY · TASKS · HELP · STOP"];
+const AGENT_HINTS = ["what's due this week?", "push 2 to Sunday", "done with the lab", "Add task: finish reading Friday"];
+
+export type RenderOptions = { agent?: boolean };
+
+function hints(opts: RenderOptions) {
+  return opts.agent ? AGENT_HINTS : COMMAND_HINTS;
+}
 
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -80,13 +84,13 @@ function sections(s: BriefingSnapshot): Section[] {
   return out;
 }
 
-export function renderEmailText(s: BriefingSnapshot): string {
+export function renderEmailText(s: BriefingSnapshot, opts: RenderOptions = {}): string {
   const parts = [`${DateTime.fromISO(s.today).toFormat("cccc, LLLL d")} — your briefing`];
   for (const sec of sections(s)) {
     parts.push("", sec.title.toUpperCase(), ...sec.lines.map((l) => (l.startsWith("  ") ? l : `- ${l}`)));
     if (sec.muted) parts.push(sec.lines.length ? `(${sec.muted})` : sec.muted);
   }
-  parts.push("", "--", "Reply to this email (first line), e.g.:", ...REPLY_HINTS.map((h) => `  ${h}`), "Built from your stored calendar and tasks.");
+  parts.push("", "--", opts.agent ? "Reply to this email, e.g.:" : "Reply to this email (first line), e.g.:", ...hints(opts).map((h) => `  ${h}`), "Built from your stored calendar and tasks.");
   return parts.join("\n");
 }
 
@@ -100,7 +104,7 @@ const STYLE = {
   footer: "color:#6e7781;font-size:13px;margin-top:24px;border-top:1px solid #d0d7de;padding-top:8px;",
 };
 
-export function renderEmailHtml(s: BriefingSnapshot): string {
+export function renderEmailHtml(s: BriefingSnapshot, opts: RenderOptions = {}): string {
   const body = sections(s)
     .map((sec) => {
       const items = sec.lines
@@ -111,6 +115,7 @@ export function renderEmailHtml(s: BriefingSnapshot): string {
       return `<h2 style="${STYLE.h2}">${escapeHtml(sec.title)}</h2>${sec.lines.length ? `<ul style="${STYLE.ul}">${list}</ul>` : ""}${sec.muted ? `<p style="${STYLE.muted}">${escapeHtml(sec.muted)}</p>` : ""}`;
     })
     .join("");
-  const hints = REPLY_HINTS.map((h) => `<code>${escapeHtml(h)}</code>`).join("<br>");
-  return `<!doctype html><html><body style="margin:0;background:#ffffff;"><div style="${STYLE.body}"><h1 style="${STYLE.h1}">${escapeHtml(DateTime.fromISO(s.today).toFormat("cccc, LLLL d"))}</h1>${body}<p style="${STYLE.footer}">Reply to this email (first line), e.g.:<br>${hints}<br>Built from your stored calendar and tasks.</p></div></body></html>`;
+  const hintHtml = hints(opts).map((h) => `<code>${escapeHtml(h)}</code>`).join("<br>");
+  const lead = opts.agent ? "Reply to this email, e.g.:" : "Reply to this email (first line), e.g.:";
+  return `<!doctype html><html><body style="margin:0;background:#ffffff;"><div style="${STYLE.body}"><h1 style="${STYLE.h1}">${escapeHtml(DateTime.fromISO(s.today).toFormat("cccc, LLLL d"))}</h1>${body}<p style="${STYLE.footer}">${lead}<br>${hintHtml}<br>Built from your stored calendar and tasks.</p></div></body></html>`;
 }

@@ -8,6 +8,7 @@ import { audit } from "@/server/audit/log";
 import { dateOnlyToISO } from "@/server/time";
 import type { BriefingSnapshot } from "@/server/briefings/generate";
 import { renderEmailHtml, renderEmailText } from "@/server/briefings/render-email";
+import { agentConfigured } from "@/server/ai/agent";
 
 export const MAX_SEND_ATTEMPTS = 3;
 
@@ -96,8 +97,8 @@ export async function sendBriefingEmail(userId: string, briefingId: string, opts
       userId,
       to: user.email,
       subject: `Your briefing for ${DateTime.fromISO(dateOnlyToISO(briefing.forDate)).toFormat("ccc LLL d")}`,
-      body: rich ? renderEmailText(snapshot) : `${briefing.content}${EMAIL_FOOTER}`,
-      html: rich ? renderEmailHtml(snapshot) : undefined,
+      body: rich ? renderEmailText(snapshot, { agent: agentConfigured() }) : `${briefing.content}${EMAIL_FOOTER}`,
+      html: rich ? renderEmailHtml(snapshot, { agent: agentConfigured() }) : undefined,
       purpose: "briefing",
       briefingId,
       attempt: attemptNumber,
