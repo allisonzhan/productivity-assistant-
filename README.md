@@ -28,7 +28,8 @@ npm 11 may ask you to approve install scripts. Approve them with `npm approve-sc
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth web client |
 | `SMS_PROVIDER` | SMS only (paused). `twilio` (real) or `simulator` (local only, labeled SIMULATED everywhere) |
 | `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | SMS only (paused). Twilio credentials and your Twilio number (E.164) |
-| `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` | Not used yet (Gate 2+) |
+| `CANVAS_BASE_URL` | Your Canvas site (default `https://canvas.vt.edu`). The personal access token is pasted on the dashboard and stored encrypted |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` / `AGENT_ENABLED` | Natural-language email replies (Claude agent, default `claude-opus-5-5`). Without a key, replies use the fixed commands only. `npm run eval` replays replies you marked on `/replies` (paid calls only with `--yes`) |
 
 ## Provider configuration
 **Google**

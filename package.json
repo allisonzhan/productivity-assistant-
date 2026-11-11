@@ -14,7 +14,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "postinstall": "prisma generate",
-    "worker": "tsx --env-file-if-exists=.env --conditions=react-server src/worker/index.ts"
+    "worker": "tsx --env-file-if-exists=.env --conditions=react-server src/worker/index.ts",
+    "eval": "tsx --env-file-if-exists=.env --conditions=react-server scripts/eval.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

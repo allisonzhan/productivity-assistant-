@@ -10,7 +10,7 @@ import { formatSlot } from "@/server/scheduling/availability";
 const COMMAND_HINTS = ["Add task: finish reading Friday", "TODAY · TASKS · HELP · STOP"];
 const AGENT_HINTS = ["what's due this week?", "push 2 to Sunday", "done with the lab", "Add task: finish reading Friday"];
 
-export type RenderOptions = { agent?: boolean };
+export type RenderOptions = { agent?: boolean; reviewUrl?: string };
 
 function hints(opts: RenderOptions) {
   return opts.agent ? AGENT_HINTS : COMMAND_HINTS;
@@ -91,6 +91,7 @@ export function renderEmailText(s: BriefingSnapshot, opts: RenderOptions = {}): 
     if (sec.muted) parts.push(sec.lines.length ? `(${sec.muted})` : sec.muted);
   }
   parts.push("", "--", opts.agent ? "Reply to this email, e.g.:" : "Reply to this email (first line), e.g.:", ...hints(opts).map((h) => `  ${h}`), "Built from your stored calendar and tasks.");
+  if (opts.agent && opts.reviewUrl) parts.push(`Did a reply go wrong? Mark it: ${opts.reviewUrl}`);
   return parts.join("\n");
 }
 
@@ -117,5 +118,6 @@ export function renderEmailHtml(s: BriefingSnapshot, opts: RenderOptions = {}): 
     .join("");
   const hintHtml = hints(opts).map((h) => `<code>${escapeHtml(h)}</code>`).join("<br>");
   const lead = opts.agent ? "Reply to this email, e.g.:" : "Reply to this email (first line), e.g.:";
-  return `<!doctype html><html><body style="margin:0;background:#ffffff;"><div style="${STYLE.body}"><h1 style="${STYLE.h1}">${escapeHtml(DateTime.fromISO(s.today).toFormat("cccc, LLLL d"))}</h1>${body}<p style="${STYLE.footer}">${lead}<br>${hintHtml}<br>Built from your stored calendar and tasks.</p></div></body></html>`;
+  const review = opts.agent && opts.reviewUrl ? `<br>Did a reply go wrong? <a href="${escapeHtml(opts.reviewUrl)}">Mark it</a>.` : "";
+  return `<!doctype html><html><body style="margin:0;background:#ffffff;"><div style="${STYLE.body}"><h1 style="${STYLE.h1}">${escapeHtml(DateTime.fromISO(s.today).toFormat("cccc, LLLL d"))}</h1>${body}<p style="${STYLE.footer}">${lead}<br>${hintHtml}<br>Built from your stored calendar and tasks.${review}</p></div></body></html>`;
 }

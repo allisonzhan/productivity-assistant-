@@ -9,6 +9,7 @@ import { dateOnlyToISO } from "@/server/time";
 import type { BriefingSnapshot } from "@/server/briefings/generate";
 import { renderEmailHtml, renderEmailText } from "@/server/briefings/render-email";
 import { agentConfigured } from "@/server/ai/agent";
+import { env } from "@/server/env";
 
 export const MAX_SEND_ATTEMPTS = 3;
 
@@ -92,13 +93,14 @@ export async function sendBriefingEmail(userId: string, briefingId: string, opts
   // email layout existed have no freeSlots; they keep the original text format.
   const snapshot = briefing.snapshot as unknown as BriefingSnapshot;
   const rich = Array.isArray(snapshot?.freeSlots);
+  const renderOpts = { agent: agentConfigured(), reviewUrl: `${env().APP_URL.replace(/\/$/, "")}/replies` };
   const attempt = await runJob({ type: "briefing_send", userId, metadata: { briefingId, channel: "email" } }, () =>
     sendEmail({
       userId,
       to: user.email,
       subject: `Your briefing for ${DateTime.fromISO(dateOnlyToISO(briefing.forDate)).toFormat("ccc LLL d")}`,
-      body: rich ? renderEmailText(snapshot, { agent: agentConfigured() }) : `${briefing.content}${EMAIL_FOOTER}`,
-      html: rich ? renderEmailHtml(snapshot, { agent: agentConfigured() }) : undefined,
+      body: rich ? renderEmailText(snapshot, renderOpts) : `${briefing.content}${EMAIL_FOOTER}`,
+      html: rich ? renderEmailHtml(snapshot, renderOpts) : undefined,
       purpose: "briefing",
       briefingId,
       attempt: attemptNumber,

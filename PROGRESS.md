@@ -21,7 +21,7 @@ Earlier: Gate 1 delivery switched from SMS to **email via the user's own Gmail**
 | 1. Briefing: free time, suggested focus, week-ahead by day, HTML email | 🟡 | Code + tests (`briefing-email.test.ts`, email-channel test checks the multipart send). Lint/typecheck/build/tests 62/62 green 2026-11-10. Live check blocked on reconnecting Google (see outage below). |
 | 2. Canvas (VT) deadlines | 🟡 | Token form on the dashboard (validated via `users/self`, stored AES-256-GCM); hourly `canvas-sync` + refresh before each scheduled briefing; upsert on `(userId, "canvas", "assignment:<id>")`; Canvas owns title/due/link/course/submission, user keeps notes/priority/done; submitted hidden; missing → soft-deleted; 401 → `reauth_required`. `canvas-sync.test.ts` 5/5 (fake Canvas). 67/67 tests, lint, build green. Live: needs your VT token. |
 | 3. Claude agent replies + YES confirmations | 🟡 | `src/server/ai`: manual tool loop (`claude-opus-5-5`, effort low, `fallbacks: "default"`, cached system prompt, strict tools). Read tools answer immediately; create/update/complete only make a `PendingAction` (24 h) that YES applies inside the claiming transaction; NO/CANCEL drops it; newer proposals supersede older ones. Dates via `dates/resolve.ts` (Luxon); "next Friday" → ask. Canvas deadlines/titles refused. Agent runs after commit (`agent_pending`), stuck runs retried after 10 min; reply sent at most once. Every tool call audited (`agent.tool.*`); every reply logged in `AgentRun`. "Add task:" fast path never calls the model. YES no longer means START. `agent-replies.test.ts` 9/9 + `resolve-dates.test.ts` (fake model, no API calls). 81/81 tests, lint, build green. Live: needs `ANTHROPIC_API_KEY` in `.env` + worker restart. |
-| 4. Reply quality log + `npm run eval` | ⬜ | |
+| 4. Reply quality log + `npm run eval` | 🟡 | `AgentRun` row per handled reply (fast path too). `/replies` page: ✓ right / ✗ wrong + note + optional "should have" (answer / ask / add / move to date / done; dates resolved as of the reply). `npm run eval`: plan + cost estimate from the original runs' tokens (no calls); `--oracle` grader self-check (free); `--yes` replays through the real agent with recorded read-tool outputs, the original now/zone, write tools stubbed; deterministic grading of proposed actions; 95% Wilson CI, per-intent breakdown, failure list; output in `.claude/hillclimb/email-replies/<variant>/` (claude-api eval layout; traces gitignored). `reply-eval.test.ts` 7/7. 88/88 tests, lint, build green. Smoke-tested read-only on the real DB (0 marked runs yet). Answer *wording* is not graded (no LLM judge yet). |
 
 ### Outage 2026-11-02 → 2026-11-10 (found during step 1)
 Google refresh token expired on 2026-11-02 (Testing-mode 7-day limit). `google_calendar` went `reauth_required`; the morning briefings of Nov 4 and Nov 8 are `failed` with "Google access was revoked or expired". The worker kept ticking and the dashboard showed Reconnect, but nothing reached the inbox, so the failure was effectively silent. Fix: consent screen → *In production* (user decision 2026-11-10), reconnect once; the worker now prints a loud hourly console warning while any Google integration needs reconnecting.
@@ -68,7 +68,11 @@ Verification run (2026-10-27): `npm run lint` clean · `npm run typecheck` clean
 
 ## Known bugs / limitations
 - No bugs known yet.
-- Email replies are checked every 5 minutes by the worker (or on demand), over the last 7 days of briefing threads; only the first line above the quoted text is read.
+- Email replies are checked every 5 minutes by the worker (or on demand), over the last 7 days of briefing threads. Commands read the first line above the quoted text; the agent gets all of it (≤1000 chars).
+- Agent replies are sent after the outcome commits: a crash between commit and send loses that reply (never duplicates it). The proposal is still saved, so YES still works.
+- "next Friday" is always answered with a question (ambiguous by design). YES only confirms in the same email thread as the proposal.
+- `npm run eval` grades what the agent proposes, not the wording of answers to questions.
+- Briefing links (`/replies`) point at `APP_URL`, i.e. localhost while the app runs on the laptop.
 - Automation runs only while `npm run worker` runs (laptop). Hosting is an open decision. Google Testing mode expires refresh tokens after 7 days.
 - Catch-up is same local day only: an evening briefing due at 22:00 is not sent after midnight.
 - Email `delivered` means Gmail shows the self-sent message in the inbox; it is confirmed on the next reply check.
@@ -95,3 +99,11 @@ Verification run (2026-10-27): `npm run lint` clean · `npm run typecheck` clean
 | 2026-10-27 | Worker: pg-boss cron (tick 1 min, replies 5 min, sync 15 min), "exclusive" queues; retries/backoff in our `ScheduledBriefing` row, not pg-boss | Cron + single execution from pg-boss; retry state stays visible and testable in our own table |
 | 2026-10-27 | Catch-up window 4 h; quiet hours defer automated sends only (command replies stay immediate) | A late briefing is still useful in the morning; a user who just texted expects an answer |
 | 2026-10-27 | Worker runs locally first (`tsx --conditions=react-server`) | Free; hosting decided after Phase A works |
+| 2026-11-10 | gate-ai-upgrade replaces Gate 2 B–D; every feature must improve the briefing or the reply loop | User goal: rely on it daily |
+| 2026-11-10 | Free time + suggested focus computed deterministically (no LLM) and labeled "suggested" | Dates/availability are deterministic code (rule 7/8) |
+| 2026-11-10 | Canvas via personal access token pasted in the app (encrypted), Canvas assignments stored as `Task` rows with `externalProvider` | One task list for the briefing and replies; provider-owned vs user-owned fields split explicitly |
+| 2026-11-10 | Agent = manual tool loop on `claude-opus-5-5`, effort low, `fallbacks: "default"`; write tools only propose; YES applies inside the claiming transaction | Exactly-once and "changes need my yes"; refusals fall back server-side |
+| 2026-11-10 | LLM runs outside DB transactions (`agent_pending` claim, 10-min stale retry) | Never hold a transaction open across a model call |
+| 2026-11-10 | YES no longer means START | YES confirms proposals; opting back in is START |
+| 2026-11-10 | Eval grades proposed actions deterministically, replaying recorded read-tool outputs | Reproducible as data changes; no judge model needed for the core metric |
+| 2026-11-10 | Google OAuth consent screen → In production (user to switch) | Testing-mode 7-day token expiry caused the Nov 2–10 outage |

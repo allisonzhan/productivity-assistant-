@@ -14,6 +14,7 @@ import { setTaskStatus } from "@/server/tasks/service";
 import { errorMessage } from "@/server/jobs/run";
 import { PreferencesError, savePreferences } from "@/server/scheduling/preferences";
 import { CanvasConnectError, connectCanvas, disconnectCanvas, syncCanvas } from "@/server/sync/canvas-sync";
+import { ReviewError, clearAgentRunMark, markAgentRun } from "@/server/ai/review";
 
 export type FormState = { ok?: boolean; message?: string; messageId?: string };
 
@@ -106,6 +107,32 @@ export async function disconnectCanvasAction() {
   const user = await requireUser();
   await disconnectCanvas(user.id);
   revalidatePath("/");
+}
+
+export async function markAgentRunAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  try {
+    const field = (k: string) => String(formData.get(k) ?? "");
+    await markAgentRun(user.id, {
+      runId: field("runId"),
+      verdict: field("verdict"),
+      note: field("note"),
+      should: field("should"),
+      taskId: field("taskId"),
+      title: field("title"),
+      dateText: field("dateText"),
+    });
+    revalidatePath("/replies");
+    return { ok: true, message: "Saved." };
+  } catch (err) {
+    return { ok: false, message: err instanceof ReviewError ? err.message : `Error: ${errorMessage(err)}` };
+  }
+}
+
+export async function clearAgentRunMarkAction(formData: FormData) {
+  const user = await requireUser();
+  await clearAgentRunMark(user.id, String(formData.get("runId") ?? ""));
+  revalidatePath("/replies");
 }
 
 export async function setBriefingChannelAction(formData: FormData) {

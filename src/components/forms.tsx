@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import {
+  markAgentRunAction,
   connectCanvasAction,
   checkEmailRepliesAction,
   confirmPhoneAction,
@@ -40,6 +41,59 @@ export function PhoneForms() {
       </form>
       <Message state={confirmState} />
     </div>
+  );
+}
+
+export function ReviewForm({ runId, tasks, verdict }: { runId: string; tasks: { id: string; title: string }[]; verdict: string | null }) {
+  const [state, action, pending] = useActionState(markAgentRunAction, {});
+  const [wrong, setWrong] = useState(verdict === "wrong");
+  const [should, setShould] = useState("");
+  return (
+    <form action={action} className="space-y-2">
+      <input type="hidden" name="runId" value={runId} />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button name="verdict" value="right" variant="secondary" disabled={pending} onClick={() => setWrong(false)}>
+          ✓ Right
+        </Button>
+        <Button type="button" variant={wrong ? "danger" : "secondary"} onClick={() => setWrong(true)}>
+          ✗ Wrong…
+        </Button>
+        <label className="sr-only" htmlFor={`note-${runId}`}>Note</label>
+        <input id={`note-${runId}`} name="note" placeholder="Note (optional)" className={inputClass} />
+      </div>
+      {wrong && (
+        <div className="space-y-2 rounded-md border border-border p-2">
+          <label className="block text-sm">
+            It should have…{" "}
+            <select name="should" value={should} onChange={(e) => setShould(e.target.value)} className={inputClass}>
+              <option value="">(just mark it wrong)</option>
+              <option value="answer">answered without changing anything</option>
+              <option value="clarify">asked me a clarifying question</option>
+              <option value="create">proposed adding a task</option>
+              <option value="update_due">proposed moving a task to a date</option>
+              <option value="complete">proposed marking a task done</option>
+            </select>
+          </label>
+          {(should === "update_due" || should === "complete") && (
+            <label className="block text-sm">
+              Task{" "}
+              <select name="taskId" className={inputClass} required>
+                <option value="">Choose…</option>
+                {tasks.map((t) => (
+                  <option key={t.id} value={t.id}>{t.title}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {should === "create" && <input name="title" placeholder="Task title" required className={inputClass} />}
+          {(should === "create" || should === "update_due") && (
+            <input name="dateText" placeholder='Date, e.g. "Sunday" or "11/15" (as of when you replied)' className={inputClass} />
+          )}
+          <Button name="verdict" value="wrong" variant="danger" disabled={pending}>Save as wrong</Button>
+        </div>
+      )}
+      <Message state={state} />
+    </form>
   );
 }
 

@@ -1,4 +1,5 @@
 import { DateTime } from "luxon";
+import Link from "next/link";
 import { prisma } from "@/server/db";
 import { env } from "@/server/env";
 import { getCurrentUser } from "@/server/auth/session";
@@ -96,9 +97,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ e
           <h1 className="text-xl font-semibold">Today · {DateTime.now().setZone(zone).toFormat("cccc, LLLL d")}</h1>
           <p className="text-sm text-muted">{user.email} · times shown in {zone}</p>
         </div>
-        <form action="/api/auth/logout" method="post">
-          <Button variant="secondary">Sign out</Button>
-        </form>
+        <div className="flex items-center gap-3">
+          <Link className="text-sm text-accent underline" href="/replies">Review replies</Link>
+          <form action="/api/auth/logout" method="post">
+            <Button variant="secondary">Sign out</Button>
+          </form>
+        </div>
       </header>
       {error && <Alert tone="error">{error}</Alert>}
       {simulator && (
